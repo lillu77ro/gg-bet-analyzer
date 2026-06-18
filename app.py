@@ -128,6 +128,34 @@ API_BASE      = "https://v3.football.api-sports.io"
 THRESHOLD_GG  = 75.0
 NUM_MATCHES   = 10
 RO_TZ         = timezone(timedelta(hours=3))   # România – EEST (vară)
+MAX_MATCHES   = 30   # Limită meciuri analizate (100 cereri/zi gratuit)
+
+# Ligi de top (filtrăm meciuri irelevante din ligi minore)
+TOP_LEAGUES = {
+    39,   # Premier League
+    140,  # La Liga
+    135,  # Serie A
+    78,   # Bundesliga
+    61,   # Ligue 1
+    94,   # Primeira Liga
+    88,   # Eredivisie
+    203,  # Süper Lig
+    179,  # Scottish Premiership
+    144,  # Jupiler Pro League
+    106,  # Ekstraklasa
+    119,  # Superliga (Danemarca)
+    218,  # Saudi Pro League
+    307,  # Saudi League
+    253,  # MLS
+    262,  # Liga MX
+    71,   # Brasileirao
+    128,  # Argentina Liga
+    2,    # UEFA Champions League
+    3,    # UEFA Europa League
+    848,  # UEFA Conference League
+    1,    # World Cup
+    4,    # Euro
+}
 
 # ─────────────────────────────────────────────
 # FUNCȚII API
@@ -162,6 +190,9 @@ def fetch_todays_fixtures() -> List[dict]:
         if fi.get("status", {}).get("short", "") in FINISHED:
             continue
 
+        # Filtrăm doar ligile de top
+        if league.get("id") not in TOP_LEAGUES:
+            continue
         # Conversie oră UTC → România
         raw_date = fi.get("date", "")
         try:
@@ -182,18 +213,20 @@ def fetch_todays_fixtures() -> List[dict]:
             "timestamp":    fi.get("timestamp", 0),
         })
 
-    return sorted(fixtures, key=lambda x: x["timestamp"])
+    return sorted(fixtures, key=lambda x: x["timestamp"])[:MAX_MATCHES]
 
 
 def fetch_team_last_matches(team_id: int) -> list:
-    """Preia ultimele NUM_MATCHES meciuri finalizate ale echipei."""
-    data = api_get("/fixtures", {
-        "team": team_id, "last": NUM_MATCHES,
-        "status": "FT-AET-PEN"
-    })
+    """Preia ultimele NUM_MATCHES meciuri ale echipei (finalizate)."""
+    data = api_get("/fixtures", {"team": team_id, "last": NUM_MATCHES})
     if not data or not data.get("response"):
         return []
-    return data["response"]
+    # Filtrăm doar meciuri finalizate
+    finished = {"FT", "AET", "PEN", "FT_PEN", "AWD", "WO"}
+    return [
+        f for f in data["response"]
+        if f.get("fixture", {}).get("status", {}).get("short", "") in finished
+    ]
 
 
 def calc_gg(fixtures_data: list) -> float:
