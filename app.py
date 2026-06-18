@@ -1,15 +1,14 @@
 """
 GG Bet Analyzer – Analiză statistică pentru piața „Ambele echipe marchează"
-Surse de date: TheSportsDB API (gratuit, fără cheie) + fallback date demo
+Sursă date: API-Football (api-sports.io) – 100 cereri/zi gratuit
+Include: GG%, accidentați & suspendați per meci
 """
 
 import streamlit as st
 import requests
-import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timezone, timedelta
+from typing import Optional, List
 import time
-import random
-from typing import Optional, List, Dict
 
 # ─────────────────────────────────────────────
 # CONFIGURARE PAGINĂ
@@ -27,573 +26,420 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
-
-/* Dark background */
 .stApp {
     background: linear-gradient(135deg, #0a0e1a 0%, #0f1629 50%, #0a1628 100%);
     color: #e2e8f0;
 }
-
-/* Header principal */
-.main-header {
-    text-align: center;
-    padding: 2rem 0 1.5rem 0;
-}
+.main-header { text-align: center; padding: 2rem 0 1.5rem 0; }
 .main-header h1 {
-    font-size: 2.8rem;
-    font-weight: 800;
+    font-size: 2.8rem; font-weight: 800;
     background: linear-gradient(90deg, #38bdf8, #818cf8, #f472b6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 0.3rem;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; margin-bottom: 0.3rem;
 }
-.main-header p {
-    color: #94a3b8;
-    font-size: 1.05rem;
-    font-weight: 400;
-}
+.main-header p { color: #94a3b8; font-size: 1.05rem; }
 
-/* Card metrici */
 .metric-card {
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 16px;
-    padding: 1.4rem 1.6rem;
-    text-align: center;
-    backdrop-filter: blur(12px);
+    border-radius: 16px; padding: 1.4rem 1.6rem; text-align: center;
 }
-.metric-card .value {
-    font-size: 2.2rem;
-    font-weight: 800;
-    color: #38bdf8;
-}
+.metric-card .value { font-size: 2.2rem; font-weight: 800; color: #38bdf8; }
 .metric-card .label {
-    font-size: 0.82rem;
-    color: #94a3b8;
-    margin-top: 0.3rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 0.82rem; color: #94a3b8; margin-top: 0.3rem;
+    text-transform: uppercase; letter-spacing: 0.06em;
 }
+.divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 1.5rem 0; }
 
-/* Tabel principal */
-.match-table-container {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 20px;
-    padding: 1.5rem;
-    margin-top: 1.5rem;
-    overflow-x: auto;
+.prob-bar-container {
+    width: 100%; background: rgba(255,255,255,0.07);
+    border-radius: 999px; height: 6px; margin-top: 4px;
 }
-.match-table-container h3 {
-    color: #e2e8f0;
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
+.prob-bar { height: 6px; border-radius: 999px; }
 
-/* Badge recomandare */
 .badge-hot {
     background: linear-gradient(90deg, #f59e0b, #ef4444);
-    color: white;
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 2px 10px;
-    border-radius: 999px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    color: white; font-size: 0.65rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; text-transform: uppercase;
 }
-.badge-normal {
-    background: rgba(148,163,184,0.15);
-    color: #94a3b8;
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 2px 10px;
-    border-radius: 999px;
-}
-
-/* Bara procentaj */
-.prob-bar-container {
-    width: 100%;
-    background: rgba(255,255,255,0.07);
-    border-radius: 999px;
-    height: 6px;
-    margin-top: 4px;
-}
-.prob-bar {
-    height: 6px;
-    border-radius: 999px;
-}
-
-/* Separator elegant */
-.divider {
-    border: none;
-    border-top: 1px solid rgba(255,255,255,0.07);
-    margin: 1.5rem 0;
-}
-
-/* Footer */
-.footer-note {
-    background: rgba(248, 113, 113, 0.08);
+.injury-card {
+    background: rgba(248,113,113,0.07);
     border: 1px solid rgba(248,113,113,0.2);
-    border-radius: 12px;
-    padding: 1rem 1.4rem;
-    margin-top: 2rem;
-    font-size: 0.82rem;
-    color: #fca5a5;
-    line-height: 1.6;
+    border-radius: 10px; padding: 0.6rem 0.9rem; margin-top: 0.4rem;
 }
-
-/* Stilizare dataframe Streamlit */
-.stDataFrame {
-    border-radius: 12px;
-    overflow: hidden;
+.injury-card .title {
+    font-size: 0.72rem; font-weight: 700; color: #fca5a5;
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;
 }
-
-/* Loading spinner text */
-.loading-text {
-    text-align: center;
-    color: #64748b;
-    font-size: 0.9rem;
-    padding: 2rem;
+.injury-tag {
+    display: inline-block;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.3);
+    color: #fca5a5; font-size: 0.72rem; font-weight: 600;
+    padding: 2px 8px; border-radius: 6px; margin: 2px 3px 2px 0;
 }
-
-/* Recomandare destacată */
+.suspension-tag {
+    display: inline-block;
+    background: rgba(245,158,11,0.15);
+    border: 1px solid rgba(245,158,11,0.3);
+    color: #fcd34d; font-size: 0.72rem; font-weight: 600;
+    padding: 2px 8px; border-radius: 6px; margin: 2px 3px 2px 0;
+}
+.no-injury {
+    font-size: 0.75rem; color: #34d399; font-weight: 500;
+}
 .recommendation-card {
-    background: linear-gradient(135deg, rgba(56,189,248,0.08) 0%, rgba(129,140,248,0.08) 100%);
+    background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(129,140,248,0.08));
     border: 1px solid rgba(56,189,248,0.25);
-    border-radius: 16px;
-    padding: 1.2rem 1.5rem;
-    margin: 0.6rem 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    border-radius: 16px; padding: 1.2rem 1.5rem; margin: 0.6rem 0;
+    display: flex; align-items: center; justify-content: space-between;
 }
-.recommendation-card .teams {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: #e2e8f0;
-}
-.recommendation-card .league {
-    font-size: 0.8rem;
-    color: #94a3b8;
-    margin-top: 2px;
-}
+.recommendation-card .teams { font-size: 1.05rem; font-weight: 700; color: #e2e8f0; }
+.recommendation-card .league { font-size: 0.8rem; color: #94a3b8; margin-top: 2px; }
 .recommendation-card .prob-circle {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
+    width: 60px; height: 60px; border-radius: 50%;
     background: linear-gradient(135deg, #38bdf8, #818cf8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.9rem;
-    font-weight: 800;
-    color: white;
-    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem; font-weight: 800; color: white; flex-shrink: 0;
 }
-
-/* Ascunde hamburger menu Streamlit */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+.footer-note {
+    background: rgba(248,113,113,0.08);
+    border: 1px solid rgba(248,113,113,0.2);
+    border-radius: 12px; padding: 1rem 1.4rem; margin-top: 2rem;
+    font-size: 0.82rem; color: #fca5a5; line-height: 1.6;
+}
+.api-counter {
+    background: rgba(56,189,248,0.06);
+    border: 1px solid rgba(56,189,248,0.15);
+    border-radius: 10px; padding: 0.5rem 1rem;
+    font-size: 0.78rem; color: #64748b; text-align: center;
+}
+#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
+# ─────────────────────────────────────────────
+# CONSTANTE
+# ─────────────────────────────────────────────
+API_KEY       = "dfa5287647ea0d419182bbeec6f924c3"
+API_BASE      = "https://v3.football.api-sports.io"
+THRESHOLD_GG  = 75.0
+NUM_MATCHES   = 10
+RO_TZ         = timezone(timedelta(hours=3))   # România – EEST (vară)
 
 # ─────────────────────────────────────────────
-# CONSTANTE & CONFIGURARE
-# ─────────────────────────────────────────────
-THRESHOLD_GG = 75.0          # Pragul de recomandare (%)
-NUM_RECENT_MATCHES = 10      # Câte meciuri recente analizăm
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125.0 Safari/537.36"
-    )
-}
-
-# TheSportsDB API – complet gratuit, fără cheie
-TSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
-
-
-# ─────────────────────────────────────────────
-# FUNCȚII AJUTĂTOARE
+# FUNCȚII API
 # ─────────────────────────────────────────────
 
-def safe_get(url: str, timeout: int = 10) -> Optional[dict]:
-    """Apel HTTP cu tratare erori."""
+def api_get(endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
+    """Apel HTTP securizat către API-Football."""
+    headers = {"x-apisports-key": API_KEY, "Accept": "application/json"}
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        r = requests.get(f"{API_BASE}{endpoint}", headers=headers,
+                         params=params, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception:
         return None
 
 
-def calc_gg_percent(events: list) -> float:
-    """
-    Calculează % meciuri GG dintr-o listă de evenimente TheSportsDB.
-    Un meci e GG dacă ambele echipe au marcat cel puțin 1 gol.
-    """
-    if not events:
-        return 0.0
-    gg_count = 0
-    total = 0
-    for ev in events:
-        score_h = ev.get("intHomeScore")
-        score_a = ev.get("intAwayScore")
-        if score_h is None or score_a is None:
+def fetch_todays_fixtures() -> List[dict]:
+    """Preia toate meciurile de fotbal programate azi."""
+    today = date.today().strftime("%Y-%m-%d")
+    data = api_get("/fixtures", {"date": today})
+    if not data or not data.get("response"):
+        return []
+
+    FINISHED = {"FT", "AET", "PEN", "FT_PEN", "AWD", "WO", "CANC", "ABD", "INT", "PST"}
+    fixtures = []
+    for f in data["response"]:
+        fi = f.get("fixture", {})
+        teams  = f.get("teams", {})
+        league = f.get("league", {})
+
+        if fi.get("status", {}).get("short", "") in FINISHED:
+            continue
+
+        # Conversie oră UTC → România
+        raw_date = fi.get("date", "")
+        try:
+            dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+            time_str = dt.astimezone(RO_TZ).strftime("%H:%M")
+        except Exception:
+            time_str = "N/A"
+
+        fixtures.append({
+            "fixture_id":   fi.get("id"),
+            "home_team":    teams.get("home", {}).get("name", "N/A"),
+            "away_team":    teams.get("away", {}).get("name", "N/A"),
+            "home_team_id": teams.get("home", {}).get("id"),
+            "away_team_id": teams.get("away", {}).get("id"),
+            "league":       league.get("name", "N/A"),
+            "country":      league.get("country", ""),
+            "time":         time_str,
+            "timestamp":    fi.get("timestamp", 0),
+        })
+
+    return sorted(fixtures, key=lambda x: x["timestamp"])
+
+
+def fetch_team_last_matches(team_id: int) -> list:
+    """Preia ultimele NUM_MATCHES meciuri finalizate ale echipei."""
+    data = api_get("/fixtures", {
+        "team": team_id, "last": NUM_MATCHES,
+        "status": "FT-AET-PEN"
+    })
+    if not data or not data.get("response"):
+        return []
+    return data["response"]
+
+
+def calc_gg(fixtures_data: list) -> float:
+    """Calculează % meciuri GG (ambele au marcat) dintr-o listă de fixture-uri."""
+    gg, total = 0, 0
+    for f in fixtures_data:
+        goals = f.get("goals", {})
+        h, a = goals.get("home"), goals.get("away")
+        if h is None or a is None:
             continue
         try:
-            h, a = int(score_h), int(score_a)
+            h, a = int(h), int(a)
         except (ValueError, TypeError):
             continue
         total += 1
         if h > 0 and a > 0:
-            gg_count += 1
-    return round((gg_count / total) * 100, 1) if total > 0 else 0.0
+            gg += 1
+    return round((gg / total) * 100, 1) if total > 0 else 0.0
 
 
-def fetch_team_last_events(team_id: str, n: int = NUM_RECENT_MATCHES) -> list:
-    """Preia ultimele n meciuri finalizate ale echipei."""
-    url = f"{TSDB_BASE}/eventslast.php?id={team_id}"
-    data = safe_get(url)
-    if not data:
-        return []
-    events = data.get("results") or []
-    return events[:n]
-
-
-def fetch_todays_matches() -> list:
+def fetch_injuries(fixture_id: int, home_id: int, away_id: int) -> dict:
     """
-    Preia meciurile de fotbal de azi via TheSportsDB.
-    Returnează o listă de dict-uri cu câmpuri normalizate.
+    Preia accidentații și suspendații pentru un meci.
+    Returnează {'home': [...], 'away': [...]}
     """
-    today = date.today().strftime("%Y-%m-%d")
-    url = f"{TSDB_BASE}/eventsday.php?d={today}&s=Soccer"
-    data = safe_get(url)
-    if not data:
-        return []
-    events = data.get("events") or []
-    matches = []
-    for ev in events:
-        # Filtrăm doar meciuri programate (nu finalizate)
-        status = (ev.get("strStatus") or "").lower()
-        if status in ("ft", "aet", "pen", "finished", "final"):
-            continue
-        matches.append({
-            "id": ev.get("idEvent", ""),
-            "home_team": ev.get("strHomeTeam", "N/A"),
-            "away_team": ev.get("strAwayTeam", "N/A"),
-            "home_team_id": ev.get("idHomeTeam", ""),
-            "away_team_id": ev.get("idAwayTeam", ""),
-            "league": ev.get("strLeague", "N/A"),
-            "time": ev.get("strTime", "00:00")[:5] if ev.get("strTime") else "N/A",
-            "date": ev.get("dateEvent", today),
-        })
-    return matches
+    data = api_get("/injuries", {"fixture": fixture_id})
+    result = {"home": [], "away": []}
+    if not data or not data.get("response"):
+        return result
+
+    for entry in data["response"]:
+        player = entry.get("player", {})
+        team   = entry.get("team", {})
+        info = {
+            "name":   player.get("name", "Unknown"),
+            "reason": player.get("reason") or "N/A",
+            "type":   player.get("type", "Unknown"),  # "Injured" / "Suspended"
+        }
+        tid = team.get("id")
+        if tid == home_id:
+            result["home"].append(info)
+        elif tid == away_id:
+            result["away"].append(info)
+
+    return result
 
 
 def analyze_match(match: dict) -> dict:
-    """
-    Calculează % GG pentru ambele echipe și probabilitatea combinată.
-    """
-    home_events = fetch_team_last_events(match["home_team_id"])
-    time.sleep(0.3)  # Respectăm rate-limit API
-    away_events = fetch_team_last_events(match["away_team_id"])
+    """Analizează un meci complet: GG% + accidentați/suspendați."""
+    home_matches = fetch_team_last_matches(match["home_team_id"])
+    time.sleep(0.25)
+    away_matches = fetch_team_last_matches(match["away_team_id"])
+    time.sleep(0.25)
 
-    gg_home = calc_gg_percent(home_events)
-    gg_away = calc_gg_percent(away_events)
-
-    # Probabilitate combinată = media ponderată
+    gg_home = calc_gg(home_matches)
+    gg_away = calc_gg(away_matches)
     combined = round((gg_home + gg_away) / 2, 1)
+
+    injuries = fetch_injuries(
+        match["fixture_id"],
+        match["home_team_id"],
+        match["away_team_id"]
+    )
+    time.sleep(0.25)
 
     return {
         **match,
-        "gg_home": gg_home,
-        "gg_away": gg_away,
-        "combined": combined,
+        "gg_home":     gg_home,
+        "gg_away":     gg_away,
+        "combined":    combined,
         "is_recommended": combined >= THRESHOLD_GG,
-        "home_matches": len(home_events),
-        "away_matches": len(away_events),
+        "home_injured":   injuries["home"],
+        "away_injured":   injuries["away"],
+        "home_n":         len(home_matches),
+        "away_n":         len(away_matches),
     }
 
 
 # ─────────────────────────────────────────────
-# DATE DEMO (fallback când API-ul nu returnează date)
+# DATE DEMO (fallback)
 # ─────────────────────────────────────────────
+def demo_data() -> List[dict]:
+    today = date.today().strftime("%Y-%m-%d")
+    return [
+        {"fixture_id": 1, "home_team": "Manchester City", "away_team": "Arsenal",
+         "league": "Premier League", "country": "England", "time": "18:30",
+         "gg_home": 82.0, "gg_away": 76.0, "combined": 79.0, "is_recommended": True,
+         "home_injured": [{"name": "Kevin De Bruyne", "reason": "Knee", "type": "Injured"}],
+         "away_injured": [], "home_n": 10, "away_n": 10},
 
-def generate_demo_data() -> list:
-    """Date demonstrative realiste pentru ziua curentă."""
-    today_str = date.today().strftime("%Y-%m-%d")
-    demo_matches = [
-        {
-            "id": "demo_1",
-            "home_team": "Manchester City",
-            "away_team": "Arsenal",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Premier League",
-            "time": "18:30",
-            "date": today_str,
-            "gg_home": 82.0,
-            "gg_away": 76.0,
-            "combined": 79.0,
-            "is_recommended": True,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_2",
-            "home_team": "Bayern München",
-            "away_team": "Borussia Dortmund",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Bundesliga",
-            "time": "20:30",
-            "date": today_str,
-            "gg_home": 90.0,
-            "gg_away": 80.0,
-            "combined": 85.0,
-            "is_recommended": True,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_3",
-            "home_team": "Real Madrid",
-            "away_team": "Atlético Madrid",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "La Liga",
-            "time": "21:00",
-            "date": today_str,
-            "gg_home": 70.0,
-            "gg_away": 60.0,
-            "combined": 65.0,
-            "is_recommended": False,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_4",
-            "home_team": "PSG",
-            "away_team": "Lyon",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Ligue 1",
-            "time": "19:00",
-            "date": today_str,
-            "gg_home": 78.0,
-            "gg_away": 72.0,
-            "combined": 75.0,
-            "is_recommended": False,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_5",
-            "home_team": "Inter Milan",
-            "away_team": "AC Milan",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Serie A",
-            "time": "20:45",
-            "date": today_str,
-            "gg_home": 88.0,
-            "gg_away": 84.0,
-            "combined": 86.0,
-            "is_recommended": True,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_6",
-            "home_team": "Sporting CP",
-            "away_team": "FC Porto",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Primeira Liga",
-            "time": "21:15",
-            "date": today_str,
-            "gg_home": 60.0,
-            "gg_away": 55.0,
-            "combined": 57.5,
-            "is_recommended": False,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_7",
-            "home_team": "Feyenoord",
-            "away_team": "Ajax",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Eredivisie",
-            "time": "17:45",
-            "date": today_str,
-            "gg_home": 80.0,
-            "gg_away": 90.0,
-            "combined": 85.0,
-            "is_recommended": True,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
-        {
-            "id": "demo_8",
-            "home_team": "Galatasaray",
-            "away_team": "Fenerbahçe",
-            "home_team_id": "",
-            "away_team_id": "",
-            "league": "Süper Lig",
-            "time": "20:00",
-            "date": today_str,
-            "gg_home": 70.0,
-            "gg_away": 80.0,
-            "combined": 75.0,
-            "is_recommended": False,
-            "home_matches": 10,
-            "away_matches": 10,
-        },
+        {"fixture_id": 2, "home_team": "Bayern München", "away_team": "Borussia Dortmund",
+         "league": "Bundesliga", "country": "Germany", "time": "20:30",
+         "gg_home": 90.0, "gg_away": 80.0, "combined": 85.0, "is_recommended": True,
+         "home_injured": [],
+         "away_injured": [{"name": "Marco Reus", "reason": "Yellow Cards", "type": "Suspended"}],
+         "home_n": 10, "away_n": 10},
+
+        {"fixture_id": 3, "home_team": "Real Madrid", "away_team": "Atlético Madrid",
+         "league": "La Liga", "country": "Spain", "time": "21:00",
+         "gg_home": 70.0, "gg_away": 60.0, "combined": 65.0, "is_recommended": False,
+         "home_injured": [], "away_injured": [], "home_n": 10, "away_n": 10},
+
+        {"fixture_id": 4, "home_team": "Inter Milan", "away_team": "AC Milan",
+         "league": "Serie A", "country": "Italy", "time": "20:45",
+         "gg_home": 88.0, "gg_away": 84.0, "combined": 86.0, "is_recommended": True,
+         "home_injured": [{"name": "Lautaro Martinez", "reason": "Muscle", "type": "Injured"}],
+         "away_injured": [{"name": "Theo Hernandez", "reason": "Red Card", "type": "Suspended"}],
+         "home_n": 10, "away_n": 10},
+
+        {"fixture_id": 5, "home_team": "PSG", "away_team": "Lyon",
+         "league": "Ligue 1", "country": "France", "time": "19:00",
+         "gg_home": 78.0, "gg_away": 72.0, "combined": 75.0, "is_recommended": False,
+         "home_injured": [], "away_injured": [], "home_n": 10, "away_n": 10},
+
+        {"fixture_id": 6, "home_team": "Feyenoord", "away_team": "Ajax",
+         "league": "Eredivisie", "country": "Netherlands", "time": "17:45",
+         "gg_home": 80.0, "gg_away": 90.0, "combined": 85.0, "is_recommended": True,
+         "home_injured": [], "away_injured": [], "home_n": 10, "away_n": 10},
     ]
-    return demo_matches
 
 
 # ─────────────────────────────────────────────
-# FUNCȚIE BARĂ DE CULOARE PENTRU PROBABILITATE
+# FUNCȚII HELPER UI
 # ─────────────────────────────────────────────
 
-def prob_color(val: float) -> str:
-    """Returnează culoarea barei de progres în funcție de valoare."""
+def prob_gradient(val: float) -> str:
     if val >= THRESHOLD_GG:
         return "linear-gradient(90deg, #38bdf8, #818cf8)"
     elif val >= 60:
         return "linear-gradient(90deg, #f59e0b, #fb923c)"
-    else:
-        return "linear-gradient(90deg, #64748b, #94a3b8)"
+    return "linear-gradient(90deg, #64748b, #94a3b8)"
 
 
-def color_cell(val: float) -> str:
-    """Culoare text pentru valorile din tabel."""
+def val_color(val: float) -> str:
     if val >= THRESHOLD_GG:
         return "#38bdf8"
     elif val >= 60:
         return "#f59e0b"
-    else:
-        return "#94a3b8"
+    return "#94a3b8"
+
+
+def render_injuries(players: list, team_name: str) -> str:
+    """Generează HTML pentru secțiunea accidentați/suspendați."""
+    if not players:
+        return f'<span class="no-injury">✅ Fără absențe cunoscute</span>'
+
+    injured   = [p for p in players if p["type"] == "Injured"]
+    suspended = [p for p in players if p["type"] == "Suspended"]
+
+    html = ""
+    for p in injured:
+        reason = p['reason'] if p['reason'] != "N/A" else "Accidentat"
+        html += f'<span class="injury-tag">🚑 {p["name"]} · {reason}</span>'
+    for p in suspended:
+        reason = p['reason'] if p['reason'] != "N/A" else "Suspendat"
+        html += f'<span class="suspension-tag">🟨 {p["name"]} · {reason}</span>'
+
+    return html
 
 
 # ─────────────────────────────────────────────
-# INTERFAȚA STREAMLIT
+# HEADER
 # ─────────────────────────────────────────────
+today_ro = datetime.now(RO_TZ).strftime("%d %B %Y").replace(
+    "January","Ianuarie").replace("February","Februarie").replace(
+    "March","Martie").replace("April","Aprilie").replace(
+    "May","Mai").replace("June","Iunie").replace(
+    "July","Iulie").replace("August","August").replace(
+    "September","Septembrie").replace("October","Octombrie").replace(
+    "November","Noiembrie").replace("December","Decembrie")
 
-# Header
-st.markdown("""
+st.markdown(f"""
 <div class="main-header">
     <h1>⚽ GG Bet Analyzer</h1>
-    <p>Analiză statistică în timp real · Piața <strong>Ambele Echipe Marchează</strong> · {}</p>
+    <p>Analiză statistică · Piața <strong>Ambele Echipe Marchează</strong> · {today_ro}</p>
 </div>
-""".format(
-    datetime.now().strftime("%d %B %Y").replace(
-        "January", "Ianuarie").replace("February", "Februarie").replace(
-        "March", "Martie").replace("April", "Aprilie").replace(
-        "May", "Mai").replace("June", "Iunie").replace(
-        "July", "Iulie").replace("August", "August").replace(
-        "September", "Septembrie").replace("October", "Octombrie").replace(
-        "November", "Noiembrie").replace("December", "Decembrie")
-), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-# ─── Buton reîmprospătare ───
-col_left, col_btn, col_right = st.columns([3, 2, 3])
+# ─────────────────────────────────────────────
+# BUTON REÎMPROSPĂTARE
+# ─────────────────────────────────────────────
+_, col_btn, _ = st.columns([3, 2, 3])
 with col_btn:
-    refresh = st.button("🔄  Reîmprospătează Datele", use_container_width=True)
+    if st.button("🔄  Reîmprospătează Datele", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-# ─── Încărcare & analiză date ───
-@st.cache_data(ttl=1800, show_spinner=False)  # Cache 30 min
-def load_and_analyze():
-    """Preia și analizează meciurile zilei."""
-    raw_matches = fetch_todays_matches()
+# ─────────────────────────────────────────────
+# ÎNCĂRCARE DATE (cu cache 30 min)
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_all_data():
+    fixtures = fetch_todays_fixtures()
     is_demo = False
 
-    if not raw_matches:
-        # Fallback la date demo
-        return generate_demo_data(), True
+    if not fixtures:
+        return demo_data(), True
 
     analyzed = []
-    for m in raw_matches:
-        if not m["home_team_id"] or not m["away_team_id"]:
+    for m in fixtures:
+        if not m.get("home_team_id") or not m.get("away_team_id"):
             continue
         result = analyze_match(m)
         analyzed.append(result)
-        time.sleep(0.2)
 
     if not analyzed:
-        return generate_demo_data(), True
+        return demo_data(), True
 
     return analyzed, False
 
 
-if refresh:
-    st.cache_data.clear()
-    st.rerun()
+with st.spinner("⏳ Se preiau meciurile, statisticile GG și informațiile despre accidentați..."):
+    matches, is_demo = load_all_data()
 
-# ─── Spinner cu mesaj ───
-with st.spinner("⏳ Se preiau și se analizează meciurile zilei..."):
-    matches_data, is_demo_mode = load_and_analyze()
-
-# ─── Banner mod demo ───
-if is_demo_mode:
+if is_demo:
     st.info(
-        "ℹ️ **Mod demonstrativ** — API-ul public nu returnează meciuri programate pentru astăzi "
-        "(posibil perioadă fără meciuri sau limită de rate). "
-        "Datele afișate sunt exemple statistice realiste.",
-        icon=None
+        "ℹ️ **Mod demonstrativ** — API-ul nu returnează meciuri programate pentru astăzi "
+        "(posibil pauză competițională). Datele afișate sunt exemple statistice realiste.",
     )
 
-# ─── Statistici sumar ───
-total = len(matches_data)
-recomandate = sum(1 for m in matches_data if m["is_recommended"])
-avg_combined = round(sum(m["combined"] for m in matches_data) / total, 1) if total > 0 else 0.0
-max_combined = max((m["combined"] for m in matches_data), default=0.0)
+# ─────────────────────────────────────────────
+# STATISTICI SUMAR
+# ─────────────────────────────────────────────
+total      = len(matches)
+recomandate = sum(1 for m in matches if m["is_recommended"])
+avg_comb   = round(sum(m["combined"] for m in matches) / total, 1) if total else 0.0
+max_comb   = max((m["combined"] for m in matches), default=0.0)
+total_abs  = sum(len(m["home_injured"]) + len(m["away_injured"]) for m in matches)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.markdown(f"""
+c1, c2, c3, c4, c5 = st.columns(5)
+cards = [
+    (c1, str(total), "Meciuri analizate", "#38bdf8"),
+    (c2, str(recomandate), f"Recomandări GG (>{int(THRESHOLD_GG)}%)", "#f472b6"),
+    (c3, f"{avg_comb}%", "Probabilitate medie", "#a78bfa"),
+    (c4, f"{max_comb}%", "Probabilitate maximă", "#34d399"),
+    (c5, str(total_abs), "Absențe identificate", "#fb923c"),
+]
+for col, val, label, color in cards:
+    col.markdown(f"""
     <div class="metric-card">
-        <div class="value">{total}</div>
-        <div class="label">Meciuri analizate</div>
-    </div>""", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="value" style="color:#f472b6">{recomandate}</div>
-        <div class="label">Recomandări GG (&gt;{int(THRESHOLD_GG)}%)</div>
-    </div>""", unsafe_allow_html=True)
-with c3:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="value" style="color:#a78bfa">{avg_combined}%</div>
-        <div class="label">Probabilitate medie</div>
-    </div>""", unsafe_allow_html=True)
-with c4:
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="value" style="color:#34d399">{max_combined}%</div>
-        <div class="label">Probabilitate maximă</div>
+        <div class="value" style="color:{color};">{val}</div>
+        <div class="label">{label}</div>
     </div>""", unsafe_allow_html=True)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -601,159 +447,159 @@ st.markdown('<hr class="divider">', unsafe_allow_html=True)
 # ─────────────────────────────────────────────
 # TABEL PRINCIPAL
 # ─────────────────────────────────────────────
-
-# Sortăm: recomandate primul, apoi descrescător după probabilitate
-sorted_matches = sorted(matches_data, key=lambda x: (-int(x["is_recommended"]), -x["combined"]))
+sorted_matches = sorted(matches, key=lambda x: (-int(x["is_recommended"]), -x["combined"]))
 
 st.markdown("""
 <div style="font-size:1.15rem; font-weight:700; color:#e2e8f0; margin-bottom:1rem;">
     📊 Analiza Meciurilor Zilei
-</div>
-""", unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
 # Header tabel
-header_cols = st.columns([1, 2.5, 2.5, 2.5, 1.5, 2, 1.8])
-headers = ["🕐 Ora", "🏟️ Echipa Gazdă", "✈️ Echipa Oaspete", "🏆 Liga",
-           "🏠 % GG Acasă", "✈️ % GG Deplasare", "📈 Probabilitate"]
+h_cols = st.columns([0.8, 2.2, 2.2, 2.2, 1.4, 1.6, 1.6])
+for col, h in zip(h_cols, ["🕐 Ora", "🏟️ Gazdă", "✈️ Oaspete", "🏆 Liga",
+                             "🏠 GG Acasă", "✈️ GG Depl.", "📈 Prob."]):
+    col.markdown(
+        f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;"
+        f"text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>",
+        unsafe_allow_html=True
+    )
+st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">', unsafe_allow_html=True)
 
-for col, h in zip(header_cols, headers):
-    col.markdown(f"<span style='font-size:0.72rem; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.06em;'>{h}</span>",
-                 unsafe_allow_html=True)
-
-st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06); margin:0.4rem 0 0.8rem 0;">', unsafe_allow_html=True)
-
-# Rânduri tabel
 for i, m in enumerate(sorted_matches):
-    rec = m["is_recommended"]
-    row_bg = "rgba(56,189,248,0.04)" if rec else "transparent"
-    border = "border-left: 3px solid #38bdf8;" if rec else "border-left: 3px solid transparent;"
+    rec     = m["is_recommended"]
+    h_inj   = m.get("home_injured", [])
+    a_inj   = m.get("away_injured", [])
+    any_abs = h_inj or a_inj
 
-    cols = st.columns([1, 2.5, 2.5, 2.5, 1.5, 2, 1.8])
+    cols = st.columns([0.8, 2.2, 2.2, 2.2, 1.4, 1.6, 1.6])
+    border = "border-left:3px solid #38bdf8;" if rec else "border-left:3px solid transparent;"
+    badge  = '<span class="badge-hot">⭐ TOP</span>' if rec else ""
+    abs_icon = " ⚠️" if any_abs else ""
 
-    # Ora
     cols[0].markdown(
-        f"<div style='{border} padding-left:8px; font-weight:600; color:#cbd5e1;'>{m['time']}</div>",
-        unsafe_allow_html=True
-    )
-
-    # Echipa gazdă + badge
-    badge = '<span class="badge-hot">⭐ TOP</span>' if rec else ""
+        f"<div style='{border}padding-left:8px;font-weight:600;color:#cbd5e1;'>{m['time']}</div>",
+        unsafe_allow_html=True)
     cols[1].markdown(
-        f"<div style='font-weight:600; color:#f1f5f9;'>{m['home_team']} {badge}</div>",
-        unsafe_allow_html=True
-    )
-
-    # Echipa oaspete
+        f"<div style='font-weight:700;color:#f1f5f9;'>{m['home_team']} {badge}</div>",
+        unsafe_allow_html=True)
     cols[2].markdown(
-        f"<div style='font-weight:500; color:#e2e8f0;'>{m['away_team']}</div>",
-        unsafe_allow_html=True
-    )
-
-    # Liga
+        f"<div style='font-weight:500;color:#e2e8f0;'>{m['away_team']}{abs_icon}</div>",
+        unsafe_allow_html=True)
     cols[3].markdown(
-        f"<div style='font-size:0.82rem; color:#94a3b8;'>{m['league']}</div>",
-        unsafe_allow_html=True
-    )
+        f"<div style='font-size:0.8rem;color:#94a3b8;'>{m['league']}</div>",
+        unsafe_allow_html=True)
 
-    # % GG acasă
-    h_col = color_cell(m["gg_home"])
-    cols[4].markdown(
-        f"<div style='font-size:1.05rem; font-weight:700; color:{h_col};'>{m['gg_home']}%</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{m['gg_home']}%; background:{prob_color(m['gg_home'])};'></div></div>",
-        unsafe_allow_html=True
-    )
+    for col, val in [(cols[4], m["gg_home"]), (cols[5], m["gg_away"])]:
+        col.markdown(
+            f"<div style='font-size:1.05rem;font-weight:700;color:{val_color(val)};'>{val}%</div>"
+            f"<div class='prob-bar-container'><div class='prob-bar' "
+            f"style='width:{val}%;background:{prob_gradient(val)};'></div></div>",
+            unsafe_allow_html=True)
 
-    # % GG deplasare
-    a_col = color_cell(m["gg_away"])
-    cols[5].markdown(
-        f"<div style='font-size:1.05rem; font-weight:700; color:{a_col};'>{m['gg_away']}%</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{m['gg_away']}%; background:{prob_color(m['gg_away'])};'></div></div>",
-        unsafe_allow_html=True
-    )
-
-    # Probabilitate combinată
-    c_col = color_cell(m["combined"])
-    prob_bg = "rgba(56,189,248,0.12)" if rec else "rgba(255,255,255,0.04)"
+    prob_bg   = "rgba(56,189,248,0.12)" if rec else "rgba(255,255,255,0.04)"
+    combined  = m["combined"]
+    comb_col  = val_color(combined)
     cols[6].markdown(
-        f"<div style='text-align:center; background:{prob_bg}; border-radius:10px; padding:6px 4px;'>"
-        f"<span style='font-size:1.15rem; font-weight:800; color:{c_col};'>{m['combined']}%</span>"
-        f"</div>",
-        unsafe_allow_html=True
-    )
+        f"<div style='text-align:center;background:{prob_bg};border-radius:10px;padding:6px 4px;'>"
+        f"<span style='font-size:1.15rem;font-weight:800;color:{comb_col};'>"
+        f"{combined}%</span></div>",
+        unsafe_allow_html=True)
+
+    # ── Secțiunea absențe (expandabilă) ──
+    if any_abs:
+        with st.expander(f"⚠️ Absențe: {m['home_team']} vs {m['away_team']}"):
+            col_h, col_a = st.columns(2)
+            with col_h:
+                st.markdown(
+                    f"<div class='injury-card'>"
+                    f"<div class='title'>🏠 {m['home_team']}</div>"
+                    f"{render_injuries(h_inj, m['home_team'])}"
+                    f"</div>", unsafe_allow_html=True)
+            with col_a:
+                st.markdown(
+                    f"<div class='injury-card'>"
+                    f"<div class='title'>✈️ {m['away_team']}</div>"
+                    f"{render_injuries(a_inj, m['away_team'])}"
+                    f"</div>", unsafe_allow_html=True)
 
     if i < len(sorted_matches) - 1:
-        st.markdown(
-            '<hr style="border-top:1px solid rgba(255,255,255,0.04); margin:0.5rem 0;">',
-            unsafe_allow_html=True
-        )
+        st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.5rem 0;">',
+                    unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# SECȚIUNEA RECOMANDĂRI ZILEI
+# RECOMANDĂRILE ZILEI
 # ─────────────────────────────────────────────
+rec_list = [m for m in sorted_matches if m["is_recommended"]]
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-recomandate_list = [m for m in sorted_matches if m["is_recommended"]]
+if rec_list:
+    st.markdown(f"""
+    <div style="font-size:1.15rem;font-weight:700;color:#e2e8f0;margin-bottom:1rem;">
+        🔥 Recomandările Zilei
+        <span style="font-size:0.8rem;color:#94a3b8;font-weight:400;">
+            (probabilitate >{int(THRESHOLD_GG)}%)
+        </span>
+    </div>""", unsafe_allow_html=True)
 
-if recomandate_list:
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="font-size:1.15rem; font-weight:700; color:#e2e8f0; margin-bottom:1rem;">
-        🔥 Recomandările Zilei <span style="font-size:0.8rem; color:#94a3b8; font-weight:400;">(probabilitate &gt;{}%)</span>
-    </div>
-    """.format(int(THRESHOLD_GG)), unsafe_allow_html=True)
+    for m in rec_list:
+        abs_warn = ""
+        total_abs_m = len(m.get("home_injured", [])) + len(m.get("away_injured", []))
+        if total_abs_m:
+            abs_warn = f'<div style="font-size:0.75rem;color:#fb923c;margin-top:4px;">⚠️ {total_abs_m} absențe identificate în acest meci</div>'
 
-    for m in recomandate_list:
         st.markdown(f"""
         <div class="recommendation-card">
             <div>
-                <div class="teams">🏠 {m['home_team']} <span style="color:#64748b; font-weight:400;">vs</span> {m['away_team']} ✈️</div>
+                <div class="teams">🏠 {m['home_team']} <span style="color:#64748b;font-weight:400;">vs</span> {m['away_team']} ✈️</div>
                 <div class="league">🏆 {m['league']} &nbsp;·&nbsp; 🕐 {m['time']}</div>
-                <div style="margin-top:0.5rem; font-size:0.8rem; color:#64748b;">
-                    Acasă: <strong style="color:#38bdf8;">{m['gg_home']}%</strong> GG &nbsp;·&nbsp;
-                    Deplasare: <strong style="color:#818cf8;">{m['gg_away']}%</strong> GG
+                <div style="margin-top:0.4rem;font-size:0.8rem;color:#64748b;">
+                    GG Acasă: <strong style="color:#38bdf8;">{m['gg_home']}%</strong>
+                    &nbsp;·&nbsp;
+                    GG Deplasare: <strong style="color:#818cf8;">{m['gg_away']}%</strong>
                 </div>
+                {abs_warn}
             </div>
             <div class="prob-circle">{m['combined']}%</div>
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 else:
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="text-align:center; padding:2rem; color:#64748b;">
+    st.markdown(f"""
+    <div style="text-align:center;padding:2rem;color:#64748b;">
         <div style="font-size:2rem;">🤔</div>
-        <div style="margin-top:0.5rem;">Niciun meci nu depășește pragul de {}% astăzi.</div>
-    </div>
-    """.format(int(THRESHOLD_GG)), unsafe_allow_html=True)
+        <div style="margin-top:0.5rem;">Niciun meci nu depășește pragul de {int(THRESHOLD_GG)}% astăzi.</div>
+    </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# NOTĂ METODOLOGICĂ
+# METODOLOGIE
 # ─────────────────────────────────────────────
-
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 with st.expander("📐 Metodologie de calcul"):
     st.markdown(f"""
-    **Cum se calculează probabilitatea GG?**
+**Cum se calculează probabilitatea GG?**
 
-    1. **Date colectate**: Ultimele **{NUM_RECENT_MATCHES} meciuri** disputate de fiecare echipă (indiferent de teren).
-    2. **% GG echipă**: număr meciuri în care echipa a marcat ȘI a primit gol ÷ total meciuri × 100.
-    3. **Probabilitate combinată**: media aritmetică dintre % GG al echipei gazdă și % GG al echipei oaspete.
-    4. **Recomandare**: meciurile cu probabilitate combinată **≥ {int(THRESHOLD_GG)}%** sunt marcate ca recomandări.
+1. **Date colectate**: Ultimele **{NUM_MATCHES} meciuri** finalizate ale fiecărei echipe (via API-Football).
+2. **% GG echipă**: meciuri cu gol de ambele echipe ÷ total meciuri × 100.
+3. **Probabilitate combinată**: media aritmetică între % GG gazdă și % GG oaspete.
+4. **Recomandare**: meciuri cu probabilitate ≥ **{int(THRESHOLD_GG)}%**.
 
-    **Sursă date**: [TheSportsDB](https://www.thesportsdb.com/) – API public și gratuit.
-    """)
+**Accidentați & suspendați**: date preluate în timp real de la API-Football pentru fiecare meci.
+Un ⚠️ indică absențe cunoscute care pot influența șansele de gol.
 
-# Footer
-st.markdown(f"""
+**Sursă date**: [API-Football](https://www.api-football.com/) – 100 cereri/zi (plan gratuit).
+""")
+
+# ─────────────────────────────────────────────
+# FOOTER
+# ─────────────────────────────────────────────
+st.markdown("""
 <div class="footer-note">
-    ⚠️ <strong>Notă importantă:</strong> Datele și procentajele afișate au caracter exclusiv statistic și informativ,
-    bazate pe istoricul recent al echipelor. Ele <strong>nu reprezintă o garanție de câștig</strong> și nu
-    constituie sfaturi de pariuri. Parierile implică riscuri financiare semnificative. Jucați responsabil.
+    ⚠️ <strong>Notă importantă:</strong> Datele și procentajele afișate au caracter exclusiv
+    statistic și informativ, bazate pe istoricul recent al echipelor.
+    Ele <strong>nu reprezintă o garanție de câștig</strong> și nu constituie sfaturi de pariuri.
+    Parierile implică riscuri financiare semnificative. Jucați responsabil.
     Vârsta minimă legală pentru pariuri sportive în România este de <strong>18 ani</strong>.
 </div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div style="text-align:center; padding:1.5rem 0 0.5rem; color:#334155; font-size:0.75rem;">
-    GG Bet Analyzer · Date actualizate la fiecare 30 de minute · Powered by TheSportsDB API
+<div style="text-align:center;padding:1.5rem 0 0.5rem;color:#334155;font-size:0.75rem;">
+    GG Bet Analyzer · Date actualizate la fiecare 30 de minute · Powered by API-Football
 </div>
 """, unsafe_allow_html=True)
