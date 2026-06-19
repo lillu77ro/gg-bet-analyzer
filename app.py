@@ -283,6 +283,12 @@ def analyze_match(match):
 
     level, label, color = confidence_level(combined)
 
+    # Dacă date insuficiente → max SILVER (nu GOLD)
+    if data_warning and level == "gold":
+        level = "silver"
+        label = "🥈 SILVER"
+        color = "#94a3b8"
+
     return {
         **match,
         "gg_home_ctx":     gg_home_ctx,
@@ -439,13 +445,56 @@ for col,val,label,color in [
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# FILTRE
+# ─────────────────────────────────────────────
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
+st.markdown("<div style='font-size:1rem;font-weight:700;color:#94a3b8;margin-bottom:0.8rem;'>🔍 Filtrare meciuri</div>",
+            unsafe_allow_html=True)
+
+# Extragem valorile unice din date
+all_countries = sorted(set(m["country"] for m in matches if m.get("country")))
+all_leagues   = sorted(set(m["league"]  for m in matches if m.get("league")))
+
+fcol1, fcol2, fcol3 = st.columns([2, 2, 1])
+
+with fcol1:
+    sel_countries = st.multiselect(
+        "🌍 Filtrează după țară",
+        options=all_countries,
+        default=[],
+        placeholder="Toate țările..."
+    )
+with fcol2:
+    sel_leagues = st.multiselect(
+        "🏆 Filtrează după ligă",
+        options=all_leagues,
+        default=[],
+        placeholder="Toate ligile..."
+    )
+with fcol3:
+    min_prob = st.slider("📈 Prob. minimă", 0, 100, 0, 5, format="%d%%")
+
+# Aplicăm filtrele
+filtered_matches = [
+    m for m in matches
+    if (not sel_countries or m.get("country","") in sel_countries)
+    and (not sel_leagues   or m.get("league","")   in sel_leagues)
+    and m["combined"] >= min_prob
+]
+
+if not filtered_matches:
+    st.warning("⚠️ Niciun meci nu corespunde filtrelor selectate. Resetează filtrele.")
+    filtered_matches = matches  # fallback la toate
+
+# ─────────────────────────────────────────────
 # TABEL
 # ─────────────────────────────────────────────
-sorted_matches = sorted(matches, key=lambda x: (
+sorted_matches = sorted(filtered_matches, key=lambda x: (
     0 if x["conf_level"]=="gold" else 1 if x["conf_level"]=="silver"
     else 2 if x["conf_level"]=="bronze" else 3, -x["combined"]))
 
-st.markdown("<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin-bottom:1rem;'>📊 Analiza Meciurilor Zilei</div>",
+st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>📊 Analiza Meciurilor Zilei "
+            f"<span style='font-size:0.8rem;color:#64748b;font-weight:400;'>({len(sorted_matches)} din {len(matches)} meciuri)</span></div>",
             unsafe_allow_html=True)
 
 h_cols = st.columns([0.7,1.9,1.9,1.8,1.5,1.5,1.5])
