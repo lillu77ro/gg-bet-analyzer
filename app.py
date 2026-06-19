@@ -415,11 +415,16 @@ with col_btn:
     if st.button("🔄  Reîmprospătează Datele", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+st.markdown(
+    "<div style='text-align:center;font-size:0.72rem;color:#475569;margin-top:4px;'>"
+    "⚠️ Reîmprospătarea manuală consumă din cota zilnică de API (100 cereri/zi). "
+    "Datele se actualizează automat o dată pe zi."
+    "</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# ÎNCĂRCARE DATE (cu cache 30 min)
+# ÎNCĂRCARE DATE (cache 24h — econom cereri API)
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def load_all_data():
     fixtures = fetch_todays_fixtures()
     is_demo = False
