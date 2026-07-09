@@ -80,7 +80,7 @@ html,body,[class*="css"]{ font-family:'Inter',sans-serif; }
 SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 THRESHOLD_GG  = 75.0
 NUM_MATCHES   = 15
-MAX_MATCHES   = 25
+MAX_MATCHES   = 50
 MIN_CTX       = 3      # minim meciuri context pentru a fi considerat valid
 RO_TZ         = timezone(timedelta(hours=3))
 
