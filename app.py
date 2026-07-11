@@ -887,7 +887,7 @@ if rec_list:
                 unsafe_allow_html=True)
 
 # Over 2.5 recommendations
-rec_o25 = [m for m in sorted_matches if m.get("conf_level_o25") in ("gold","silver") and m not in rec_list]
+rec_o25 = [m for m in sorted_matches if m.get("conf_level_o25") in ("gold","silver")]
 if rec_o25:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.markdown(
