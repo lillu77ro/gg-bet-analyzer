@@ -83,8 +83,8 @@ html,body,[class*="css"]{ font-family:'Inter',sans-serif; }
 # CONSTANTE
 # ─────────────────────────────────────────────
 SPORTSDB_BASE  = "https://www.thesportsdb.com/api/v1/json/3"
-THRESHOLD_GG   = 75.0
-THRESHOLD_O25  = 70.0
+THRESHOLD_GG   = 80.0
+THRESHOLD_O25  = 80.0
 NUM_MATCHES    = 15
 MAX_MATCHES    = 50
 MIN_CTX        = 3      # minim meciuri context pentru a fi considerat valid
