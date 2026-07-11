@@ -528,8 +528,8 @@ if is_demo:
 # FILTRARE: doar meciuri peste prag (Gold + Silver)
 # ─────────────────────────────────────────────
 matches = [m for m in matches if (
-    m["conf_level"] in ("gold", "silver")
-    or m.get("conf_level_o25") in ("gold", "silver")
+    m["conf_level"] == "gold"
+    or m.get("conf_level_o25") == "gold"
     or m.get("is_combo", False)
 )]
 
@@ -538,19 +538,16 @@ matches = [m for m in matches if (
 # ─────────────────────────────────────────────
 total      = len(matches)
 gold_gg    = sum(1 for m in matches if m["conf_level"]=="gold")
-silver_gg  = sum(1 for m in matches if m["conf_level"]=="silver")
 combo_cnt  = sum(1 for m in matches if m.get("is_combo"))
 gold_o25   = sum(1 for m in matches if m.get("conf_level_o25")=="gold")
-silver_o25 = sum(1 for m in matches if m.get("conf_level_o25")=="silver")
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-c1,c2,c3,c4,c5 = st.columns(5)
+c1,c2,c3,c4 = st.columns(4)
 for col,val,label,color in [
     (c1, str(total),          "Meciuri recomandate", "#38bdf8"),
     (c2, f"🥇 {gold_gg}",    "GG Gold (≥85%)",      "#f59e0b"),
     (c3, f"⚽ {gold_o25}",    "O2.5 Gold (≥80%)",    "#ec4899"),
     (c4, f"🔥 {combo_cnt}",   "COMBO GG+O2.5",       "#8b5cf6"),
-    (c5, f"🥈 {silver_gg + silver_o25}", "Silver Total", "#94a3b8"),
 ]:
     col.markdown(
         f"<div class='metric-card'><div class='value' style='color:{color};'>{val}</div>"
@@ -572,9 +569,9 @@ with fcol_market:
 
 # Aplicăm filtrul
 if market_filter == "Doar GG":
-    filtered_matches = [m for m in matches if m["conf_level"] in ("gold", "silver")]
+    filtered_matches = [m for m in matches if m["conf_level"] == "gold"]
 elif market_filter == "Doar Over 2.5":
-    filtered_matches = [m for m in matches if m.get("conf_level_o25") in ("gold", "silver")]
+    filtered_matches = [m for m in matches if m.get("conf_level_o25") == "gold"]
 elif market_filter == "🔥 COMBO":
     filtered_matches = [m for m in matches if m.get("is_combo", False)]
 else:
@@ -830,7 +827,7 @@ if combo_list:
                 unsafe_allow_html=True)
 
 # GG recommendations
-rec_list = [m for m in sorted_matches if m["conf_level"] in ("gold","silver")]
+rec_list = [m for m in sorted_matches if m["conf_level"] == "gold"]
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 if rec_list:
@@ -887,7 +884,7 @@ if rec_list:
                 unsafe_allow_html=True)
 
 # Over 2.5 recommendations
-rec_o25 = [m for m in sorted_matches if m.get("conf_level_o25") in ("gold","silver")]
+rec_o25 = [m for m in sorted_matches if m.get("conf_level_o25") == "gold"]
 if rec_o25:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.markdown(
