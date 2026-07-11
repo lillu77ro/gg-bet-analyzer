@@ -1,15 +1,13 @@
 """
-GG Bet Analyzer – Analiză statistică pentru piața „Ambele echipe marchează"
+NORD ALLASKA SUPREME – Analiză statistică GG + Over 2.5
 Surse date: TheSportsDB (gratuit, nelimitat)
-Features v4:
+Features v5:
   - GG% Acasă/Deplasare split contextual
-  - Over 2.5 Goals (3+ goluri/meci) — NOU
-  - COMBO Signal (GG + Over 2.5) — NOU
+  - Over 2.5 Goals (3+ goluri/meci)
+  - COMBO Signal (GG + Over 2.5)
   - H2H (față în față) cu ponderare în scorul final
   - Trend ↗️↘️→ ultimele 3 vs ultimele 10 meciuri
-  - Warning date insuficiente
-  - Medie goluri/meci
-  - Niveluri Gold / Silver / Bronze
+  - Doar meciuri Gold & Silver (peste prag)
 """
 
 import streamlit as st
@@ -20,8 +18,8 @@ from datetime import date, datetime, timezone, timedelta
 # CONFIGURARE PAGINĂ
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="GG & Over 2.5 Analyzer",
-    page_icon="⚽",
+    page_title="NORD ALLASKA SUPREME",
+    page_icon="🏔️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -485,7 +483,7 @@ for en,ro in months_ro.items():
 
 st.markdown(f"""
 <div class="main-header">
-    <h1>⚽ GG & Over 2.5 Analyzer</h1>
+    <h1>🏔️ NORD ALLASKA SUPREME</h1>
     <p>Analiză statistică · <strong>GG</strong> + <strong>Over 2.5</strong> + <strong>🔥 COMBO</strong> · {today_str}</p>
 </div>""", unsafe_allow_html=True)
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -527,6 +525,15 @@ if is_demo:
     st.info("ℹ️ **Mod demonstrativ** — Nu există meciuri programate astăzi. Datele afișate sunt exemple realiste.")
 
 # ─────────────────────────────────────────────
+# FILTRARE: doar meciuri peste prag (Gold + Silver)
+# ─────────────────────────────────────────────
+matches = [m for m in matches if (
+    m["conf_level"] in ("gold", "silver")
+    or m.get("conf_level_o25") in ("gold", "silver")
+    or m.get("is_combo", False)
+)]
+
+# ─────────────────────────────────────────────
 # SUMAR
 # ─────────────────────────────────────────────
 total      = len(matches)
@@ -534,15 +541,16 @@ gold_gg    = sum(1 for m in matches if m["conf_level"]=="gold")
 silver_gg  = sum(1 for m in matches if m["conf_level"]=="silver")
 combo_cnt  = sum(1 for m in matches if m.get("is_combo"))
 gold_o25   = sum(1 for m in matches if m.get("conf_level_o25")=="gold")
+silver_o25 = sum(1 for m in matches if m.get("conf_level_o25")=="silver")
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 c1,c2,c3,c4,c5 = st.columns(5)
 for col,val,label,color in [
-    (c1, str(total),          "Meciuri analizate",  "#38bdf8"),
-    (c2, f"🥇 {gold_gg}",    "GG Gold (≥85%)",     "#f59e0b"),
-    (c3, f"⚽ {gold_o25}",    "O2.5 Gold (≥80%)",   "#ec4899"),
-    (c4, f"🔥 {combo_cnt}",   "COMBO GG+O2.5",      "#8b5cf6"),
-    (c5, f"🥈 {silver_gg}",   "GG Silver (75-85%)", "#94a3b8"),
+    (c1, str(total),          "Meciuri recomandate", "#38bdf8"),
+    (c2, f"🥇 {gold_gg}",    "GG Gold (≥85%)",      "#f59e0b"),
+    (c3, f"⚽ {gold_o25}",    "O2.5 Gold (≥80%)",    "#ec4899"),
+    (c4, f"🔥 {combo_cnt}",   "COMBO GG+O2.5",       "#8b5cf6"),
+    (c5, f"🥈 {silver_gg + silver_o25}", "Silver Total", "#94a3b8"),
 ]:
     col.markdown(
         f"<div class='metric-card'><div class='value' style='color:{color};'>{val}</div>"
@@ -551,55 +559,29 @@ for col,val,label,color in [
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# FILTRE
+# FILTRU PIAȚĂ
 # ─────────────────────────────────────────────
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-st.markdown("<div style='font-size:1rem;font-weight:700;color:#94a3b8;margin-bottom:0.8rem;'>🔍 Filtrare meciuri</div>",
-            unsafe_allow_html=True)
-
-all_countries = sorted(set(m["country"] for m in matches if m.get("country")))
-all_leagues   = sorted(set(m["league"]  for m in matches if m.get("league")))
-
-fcol1, fcol2, fcol3, fcol4 = st.columns([2, 2, 1, 1])
-
-with fcol1:
-    sel_countries = st.multiselect(
-        "🌍 Filtrează după țară",
-        options=all_countries,
-        default=[],
-        placeholder="Toate țările..."
-    )
-with fcol2:
-    sel_leagues = st.multiselect(
-        "🏆 Filtrează după ligă",
-        options=all_leagues,
-        default=[],
-        placeholder="Toate ligile..."
-    )
-with fcol3:
-    min_prob = st.slider("📈 Prob. minimă", 0, 100, 0, 5, format="%d%%")
-with fcol4:
+_, fcol_market, _ = st.columns([3, 2, 3])
+with fcol_market:
     market_filter = st.selectbox(
-        "📊 Piață",
+        "📊 Selectează piața",
         options=["GG + Over 2.5", "Doar GG", "Doar Over 2.5", "🔥 COMBO"],
         index=0
     )
 
-# Aplicăm filtrele
-filtered_matches = [
-    m for m in matches
-    if (not sel_countries or m.get("country","") in sel_countries)
-    and (not sel_leagues   or m.get("league","")   in sel_leagues)
-    and (
-        (market_filter == "Doar GG" and m["combined"] >= min_prob)
-        or (market_filter == "Doar Over 2.5" and m.get("combined_o25",0) >= min_prob)
-        or (market_filter == "🔥 COMBO" and m.get("is_combo", False))
-        or (market_filter == "GG + Over 2.5" and max(m["combined"], m.get("combined_o25",0)) >= min_prob)
-    )
-]
+# Aplicăm filtrul
+if market_filter == "Doar GG":
+    filtered_matches = [m for m in matches if m["conf_level"] in ("gold", "silver")]
+elif market_filter == "Doar Over 2.5":
+    filtered_matches = [m for m in matches if m.get("conf_level_o25") in ("gold", "silver")]
+elif market_filter == "🔥 COMBO":
+    filtered_matches = [m for m in matches if m.get("is_combo", False)]
+else:
+    filtered_matches = matches
 
 if not filtered_matches:
-    st.warning("⚠️ Niciun meci nu corespunde filtrelor selectate. Resetează filtrele.")
+    st.info("🤔 Niciun meci nu trece pragul pentru această piață astăzi.")
     filtered_matches = matches
 
 # ─────────────────────────────────────────────
@@ -1003,6 +985,6 @@ st.markdown("""
     Vârsta minimă legală în România: <strong>18 ani</strong>.
 </div>
 <div style="text-align:center;padding:1.5rem 0 0.5rem;color:#334155;font-size:0.75rem;">
-    GG & Over 2.5 Analyzer v4 · Powered by TheSportsDB · Date actualizate la fiecare 12 ore
+    NORD ALLASKA SUPREME v5 · Powered by TheSportsDB · Date actualizate la fiecare 12 ore
 </div>
 """, unsafe_allow_html=True)
