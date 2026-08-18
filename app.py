@@ -85,6 +85,8 @@ html,body,[class*="css"]{ font-family:'Inter',sans-serif; }
 SPORTSDB_BASE  = "https://www.thesportsdb.com/api/v1/json/3"
 THRESHOLD_GG   = 80.0
 THRESHOLD_O25  = 80.0
+THRESHOLD_O35  = 80.0
+THRESHOLD_1X2  = 60.0
 NUM_MATCHES    = 15
 MAX_MATCHES    = 50
 MIN_CTX        = 3      # minim meciuri context pentru a fi considerat valid
@@ -161,7 +163,7 @@ def fetch_h2h(home_id, away_id):
 
 
 # ─────────────────────────────────────────────
-# CALCUL STATISTICI (GG + OVER 2.5)
+# CALCUL STATISTICI (GG + OVER 2.5 + OVER 3.5 + 1X2)
 # ─────────────────────────────────────────────
 def calc_stats(events, team_id):
     home_gg, home_total = 0, 0
@@ -177,6 +179,16 @@ def calc_stats(events, team_id):
     form_5_o25 = []
     recent_3_o25 = 0
 
+    # Over 3.5 counters
+    home_o35, away_o35 = 0, 0
+    all_o35 = 0
+    form_5_o35 = []
+    recent_3_o35 = 0
+
+    # 1X2 counters (wins/draws/losses)
+    home_wins, home_draws, home_losses = 0, 0, 0
+    away_wins, away_draws, away_losses = 0, 0, 0
+
     for idx, ev in enumerate(events):
         h = ev.get("intHomeScore")
         a = ev.get("intAwayScore")
@@ -189,12 +201,15 @@ def calc_stats(events, team_id):
 
         gg = h > 0 and a > 0
         over25 = (h + a) >= 3
+        over35 = (h + a) >= 4
         all_total  += 1
         total_goals += h + a
         if gg:
             all_gg += 1
         if over25:
             all_o25 += 1
+        if over35:
+            all_o35 += 1
 
         if idx < 3:
             recent_3_total += 1
@@ -202,21 +217,35 @@ def calc_stats(events, team_id):
                 recent_3_gg += 1
             if over25:
                 recent_3_o25 += 1
+            if over35:
+                recent_3_o35 += 1
 
         if len(form_5_gg) < 5:
             form_5_gg.append(gg)
         if len(form_5_o25) < 5:
             form_5_o25.append(over25)
+        if len(form_5_o35) < 5:
+            form_5_o35.append(over35)
 
         is_home = str(ev.get("idHomeTeam","")) == str(team_id)
         if is_home:
             home_total += 1
             if gg: home_gg += 1
             if over25: home_o25 += 1
+            if over35: home_o35 += 1
+            # 1X2: when team plays at home
+            if h > a: home_wins += 1
+            elif h == a: home_draws += 1
+            else: home_losses += 1
         else:
             away_total += 1
             if gg: away_gg += 1
             if over25: away_o25 += 1
+            if over35: away_o35 += 1
+            # 1X2: when team plays away
+            if a > h: away_wins += 1
+            elif h == a: away_draws += 1
+            else: away_losses += 1
 
     gg_all  = round((all_gg  / all_total)  * 100, 1) if all_total  else 0.0
     gg_home = round((home_gg / home_total) * 100, 1) if home_total else 0.0
@@ -227,6 +256,19 @@ def calc_stats(events, team_id):
     o25_home = round((home_o25 / home_total) * 100, 1) if home_total else 0.0
     o25_away = round((away_o25 / away_total) * 100, 1) if away_total else 0.0
     r3_o25   = round((recent_3_o25 / recent_3_total) * 100, 1) if recent_3_total else 0.0
+
+    o35_all  = round((all_o35  / all_total)  * 100, 1) if all_total  else 0.0
+    o35_home = round((home_o35 / home_total) * 100, 1) if home_total else 0.0
+    o35_away = round((away_o35 / away_total) * 100, 1) if away_total else 0.0
+    r3_o35   = round((recent_3_o35 / recent_3_total) * 100, 1) if recent_3_total else 0.0
+
+    # 1X2 percentages
+    win_home_pct  = round((home_wins   / home_total) * 100, 1) if home_total else 0.0
+    draw_home_pct = round((home_draws  / home_total) * 100, 1) if home_total else 0.0
+    loss_home_pct = round((home_losses / home_total) * 100, 1) if home_total else 0.0
+    win_away_pct  = round((away_wins   / away_total) * 100, 1) if away_total else 0.0
+    draw_away_pct = round((away_draws  / away_total) * 100, 1) if away_total else 0.0
+    loss_away_pct = round((away_losses / away_total) * 100, 1) if away_total else 0.0
 
     # Trend GG ↗️↘️→
     diff_gg = r3_gg - gg_all
@@ -245,6 +287,15 @@ def calc_stats(events, team_id):
         trend_o25, trend_o25_color = "↘️ În scădere", "#f87171"
     else:
         trend_o25, trend_o25_color = "→ Stabil", "#94a3b8"
+
+    # Trend Over 3.5 ↗️↘️→
+    diff_o35 = r3_o35 - o35_all
+    if diff_o35 >= 15:
+        trend_o35, trend_o35_color = "↗️ În creștere", "#34d399"
+    elif diff_o35 <= -15:
+        trend_o35, trend_o35_color = "↘️ În scădere", "#f87171"
+    else:
+        trend_o35, trend_o35_color = "→ Stabil", "#94a3b8"
 
     return {
         "gg_all":    gg_all,
@@ -266,12 +317,28 @@ def calc_stats(events, team_id):
         "trend_o25":  trend_o25,
         "trend_o25_color": trend_o25_color,
         "recent_3_o25": r3_o25,
+        # Over 3.5 stats
+        "o35_all":   o35_all,
+        "o35_home":  o35_home,
+        "o35_away":  o35_away,
+        "form_5_o35": form_5_o35,
+        "trend_o35":  trend_o35,
+        "trend_o35_color": trend_o35_color,
+        "recent_3_o35": r3_o35,
+        # 1X2 stats
+        "win_home_pct":  win_home_pct,
+        "draw_home_pct": draw_home_pct,
+        "loss_home_pct": loss_home_pct,
+        "win_away_pct":  win_away_pct,
+        "draw_away_pct": draw_away_pct,
+        "loss_away_pct": loss_away_pct,
     }
 
 
 def calc_h2h_stats(events):
-    """Calculează GG% și Over 2.5% din meciurile H2H."""
-    gg, o25, total = 0, 0, 0
+    """Calculează GG%, Over 2.5%, Over 3.5% și 1X2 din meciurile H2H."""
+    gg, o25, o35, total = 0, 0, 0, 0
+    h2h_home_wins, h2h_draws, h2h_away_wins = 0, 0, 0
     for ev in events:
         h = ev.get("intHomeScore")
         a = ev.get("intAwayScore")
@@ -286,9 +353,21 @@ def calc_h2h_stats(events):
             gg += 1
         if (h + a) >= 3:
             o25 += 1
+        if (h + a) >= 4:
+            o35 += 1
+        if h > a:
+            h2h_home_wins += 1
+        elif h == a:
+            h2h_draws += 1
+        else:
+            h2h_away_wins += 1
     gg_pct  = round((gg  / total) * 100, 1) if total else None
     o25_pct = round((o25 / total) * 100, 1) if total else None
-    return gg_pct, o25_pct, total
+    o35_pct = round((o35 / total) * 100, 1) if total else None
+    h2h_1_pct = round((h2h_home_wins / total) * 100, 1) if total else None
+    h2h_x_pct = round((h2h_draws     / total) * 100, 1) if total else None
+    h2h_2_pct = round((h2h_away_wins / total) * 100, 1) if total else None
+    return gg_pct, o25_pct, o35_pct, h2h_1_pct, h2h_x_pct, h2h_2_pct, total
 
 
 def confidence_level(pct):
@@ -311,6 +390,26 @@ def confidence_level_o25(pct):
     return "none", "", "#64748b"
 
 
+def confidence_level_o35(pct):
+    if pct >= 80:
+        return "gold",   "🥇 GOLD",   "#f59e0b"
+    elif pct >= 70:
+        return "silver", "🥈 SILVER", "#94a3b8"
+    elif pct >= 60:
+        return "bronze", "🥉 BRONZE", "#b45309"
+    return "none", "", "#64748b"
+
+
+def confidence_level_1x2(pct):
+    if pct >= 60:
+        return "gold",   "🥇 GOLD",   "#f59e0b"
+    elif pct >= 50:
+        return "silver", "🥈 SILVER", "#94a3b8"
+    elif pct >= 40:
+        return "bronze", "🥉 BRONZE", "#b45309"
+    return "none", "", "#64748b"
+
+
 def analyze_match(match):
     home_events = fetch_team_last_matches(match["home_team_id"])
     away_events = fetch_team_last_matches(match["away_team_id"])
@@ -318,7 +417,7 @@ def analyze_match(match):
 
     home_stats = calc_stats(home_events, match["home_team_id"])
     away_stats = calc_stats(away_events, match["away_team_id"])
-    h2h_gg, h2h_o25, h2h_count = calc_h2h_stats(h2h_events)
+    h2h_gg, h2h_o25, h2h_o35, h2h_1, h2h_x, h2h_2, h2h_count = calc_h2h_stats(h2h_events)
 
     # GG% contextual: acasă pt gazdă, deplasare pt oaspete
     home_ctx_valid = home_stats["home_m"] >= MIN_CTX
@@ -329,6 +428,10 @@ def analyze_match(match):
     # Over 2.5 contextual
     o25_home_ctx = home_stats["o25_home"] if home_ctx_valid else home_stats["o25_all"]
     o25_away_ctx = away_stats["o25_away"] if away_ctx_valid else away_stats["o25_all"]
+
+    # Over 3.5 contextual
+    o35_home_ctx = home_stats["o35_home"] if home_ctx_valid else home_stats["o35_all"]
+    o35_away_ctx = away_stats["o35_away"] if away_ctx_valid else away_stats["o35_all"]
 
     # GG Combined
     if h2h_gg is not None and h2h_count >= 3:
@@ -342,26 +445,67 @@ def analyze_match(match):
     else:
         combined_o25 = round((o25_home_ctx + o25_away_ctx) / 2, 1)
 
+    # Over 3.5 Combined
+    if h2h_o35 is not None and h2h_count >= 3:
+        combined_o35 = round(o35_home_ctx * 0.4 + o35_away_ctx * 0.4 + h2h_o35 * 0.2, 1)
+    else:
+        combined_o35 = round((o35_home_ctx + o35_away_ctx) / 2, 1)
+
+    # 1X2 Combined
+    # prob_1 = home team wins: home's win% at home + away team's loss% away
+    # prob_x = draw: average of both teams' draw %
+    # prob_2 = away team wins: away's win% away + home team's loss% at home
+    home_win_ctx  = home_stats["win_home_pct"]  if home_ctx_valid else 0.0
+    home_draw_ctx = home_stats["draw_home_pct"] if home_ctx_valid else 0.0
+    home_loss_ctx = home_stats["loss_home_pct"] if home_ctx_valid else 0.0
+    away_win_ctx  = away_stats["win_away_pct"]  if away_ctx_valid else 0.0
+    away_draw_ctx = away_stats["draw_away_pct"] if away_ctx_valid else 0.0
+    away_loss_ctx = away_stats["loss_away_pct"] if away_ctx_valid else 0.0
+
+    if h2h_1 is not None and h2h_count >= 3:
+        prob_1 = round(home_win_ctx * 0.3 + away_loss_ctx * 0.3 + h2h_1 * 0.2 + 10, 1)  # +10 home advantage
+        prob_x = round(home_draw_ctx * 0.3 + away_draw_ctx * 0.3 + h2h_x * 0.2, 1)
+        prob_2 = round(away_win_ctx * 0.3 + home_loss_ctx * 0.3 + h2h_2 * 0.2, 1)
+    else:
+        prob_1 = round((home_win_ctx + away_loss_ctx) / 2 + 5, 1)  # +5 home advantage
+        prob_x = round((home_draw_ctx + away_draw_ctx) / 2, 1)
+        prob_2 = round((away_win_ctx + home_loss_ctx) / 2, 1)
+
+    # Normalize to 100%
+    total_prob = prob_1 + prob_x + prob_2
+    if total_prob > 0:
+        prob_1 = round(prob_1 / total_prob * 100, 1)
+        prob_x = round(prob_x / total_prob * 100, 1)
+        prob_2 = round(prob_2 / total_prob * 100, 1)
+
+    # Best 1X2 pick
+    best_1x2_options = {"1": prob_1, "X": prob_x, "2": prob_2}
+    best_1x2 = max(best_1x2_options, key=best_1x2_options.get)
+    best_1x2_pct = best_1x2_options[best_1x2]
+
     # Dacă date total insuficiente → penalizare nivel
     data_warning = (home_stats["total_m"] < 5) or (away_stats["total_m"] < 5)
     if data_warning:
         combined_gg  = max(0.0, round(combined_gg  * 0.9, 1))
         combined_o25 = max(0.0, round(combined_o25 * 0.9, 1))
+        combined_o35 = max(0.0, round(combined_o35 * 0.9, 1))
 
     level_gg, label_gg, color_gg = confidence_level(combined_gg)
     level_o25, label_o25, color_o25 = confidence_level_o25(combined_o25)
+    level_o35, label_o35, color_o35 = confidence_level_o35(combined_o35)
+    level_1x2, label_1x2, color_1x2 = confidence_level_1x2(best_1x2_pct)
 
     # Dacă date insuficiente → max SILVER (nu GOLD)
     if data_warning and level_gg == "gold":
-        level_gg = "silver"
-        label_gg = "🥈 SILVER"
-        color_gg = "#94a3b8"
+        level_gg = "silver"; label_gg = "🥈 SILVER"; color_gg = "#94a3b8"
     if data_warning and level_o25 == "gold":
-        level_o25 = "silver"
-        label_o25 = "🥈 SILVER"
-        color_o25 = "#94a3b8"
+        level_o25 = "silver"; label_o25 = "🥈 SILVER"; color_o25 = "#94a3b8"
+    if data_warning and level_o35 == "gold":
+        level_o35 = "silver"; label_o35 = "🥈 SILVER"; color_o35 = "#94a3b8"
+    if data_warning and level_1x2 == "gold":
+        level_1x2 = "silver"; label_1x2 = "🥈 SILVER"; color_1x2 = "#94a3b8"
 
-    # COMBO: GG >= 75% AND Over 2.5 >= 70%
+    # COMBO: GG >= 80% AND Over 2.5 >= 80%
     is_combo = combined_gg >= THRESHOLD_GG and combined_o25 >= THRESHOLD_O25
 
     return {
@@ -378,6 +522,7 @@ def analyze_match(match):
         "data_warning":    data_warning,
         "h2h_gg":          h2h_gg,
         "h2h_o25":         h2h_o25,
+        "h2h_o35":         h2h_o35,
         "h2h_count":       h2h_count,
         "home_stats":      home_stats,
         "away_stats":      away_stats,
@@ -391,6 +536,24 @@ def analyze_match(match):
         "conf_label_o25":  label_o25,
         "conf_color_o25":  color_o25,
         "is_recommended_o25": combined_o25 >= THRESHOLD_O25,
+        # Over 3.5
+        "o35_home_ctx":    o35_home_ctx,
+        "o35_away_ctx":    o35_away_ctx,
+        "combined_o35":    combined_o35,
+        "conf_level_o35":  level_o35,
+        "conf_label_o35":  label_o35,
+        "conf_color_o35":  color_o35,
+        "is_recommended_o35": combined_o35 >= THRESHOLD_O35,
+        # 1X2
+        "prob_1":          prob_1,
+        "prob_x":          prob_x,
+        "prob_2":          prob_2,
+        "best_1x2":        best_1x2,
+        "best_1x2_pct":    best_1x2_pct,
+        "conf_level_1x2":  level_1x2,
+        "conf_label_1x2":  label_1x2,
+        "conf_color_1x2":  color_1x2,
+        "is_recommended_1x2": best_1x2_pct >= THRESHOLD_1X2,
         # COMBO
         "is_combo":        is_combo,
     }
@@ -409,26 +572,52 @@ def demo_data():
         lvl,lbl,col = confidence_level(comb)
         lvl_o,lbl_o,col_o = confidence_level_o25(comb_o25)
         is_combo = comb >= THRESHOLD_GG and comb_o25 >= THRESHOLD_O25
+        o35h = max(0.0, o25h - 20.0)  # O3.5 roughly 20% less than O2.5
+        o35a = max(0.0, o25a - 20.0)
+        h2h_o35_v = max(0.0, h2h_o25 - 20.0) if h2h_c >= 3 else 0.0
+        comb_o35 = round(o35h*0.4 + o35a*0.4 + h2h_o35_v*0.2, 1) if h2h_c>=3 else round((o35h+o35a)/2,1)
+        lvl_o35,lbl_o35,col_o35 = confidence_level_o35(comb_o35)
+        # 1X2 demo
+        prob_1_d, prob_x_d, prob_2_d = 45.0, 25.0, 30.0
+        best_1x2_d = max({"1":prob_1_d,"X":prob_x_d,"2":prob_2_d}, key={"1":prob_1_d,"X":prob_x_d,"2":prob_2_d}.get)
+        best_1x2_pct_d = max(prob_1_d, prob_x_d, prob_2_d)
+        lvl_1x2,lbl_1x2,col_1x2 = confidence_level_1x2(best_1x2_pct_d)
         hs = {"gg_all":ghc,"gg_home":ghc,"gg_away":ghc,"avg_goals":2.8,
               "total_m":10,"home_m":5,"away_m":5,
               "form_5":[True,True,True,False,True],"trend":"↗️ În creștere","trend_color":"#34d399","recent_3":90.0,
               "o25_all":o25h,"o25_home":o25h,"o25_away":o25h,
-              "form_5_o25":[True,True,False,True,True],"trend_o25":"→ Stabil","trend_o25_color":"#94a3b8","recent_3_o25":o25h}
+              "form_5_o25":[True,True,False,True,True],"trend_o25":"→ Stabil","trend_o25_color":"#94a3b8","recent_3_o25":o25h,
+              "o35_all":o35h,"o35_home":o35h,"o35_away":o35h,
+              "form_5_o35":[True,False,False,True,False],"trend_o35":"→ Stabil","trend_o35_color":"#94a3b8","recent_3_o35":o35h,
+              "win_home_pct":60.0,"draw_home_pct":20.0,"loss_home_pct":20.0,
+              "win_away_pct":40.0,"draw_away_pct":20.0,"loss_away_pct":40.0}
         as_ = {"gg_all":gac,"gg_home":gac,"gg_away":gac,"avg_goals":2.4,
                "total_m":10,"home_m":5,"away_m":5,
                "form_5":[True,False,True,True,True],"trend":"→ Stabil","trend_color":"#94a3b8","recent_3":gac,
                "o25_all":o25a,"o25_home":o25a,"o25_away":o25a,
-               "form_5_o25":[True,False,True,False,True],"trend_o25":"→ Stabil","trend_o25_color":"#94a3b8","recent_3_o25":o25a}
+               "form_5_o25":[True,False,True,False,True],"trend_o25":"→ Stabil","trend_o25_color":"#94a3b8","recent_3_o25":o25a,
+               "o35_all":o35a,"o35_home":o35a,"o35_away":o35a,
+               "form_5_o35":[False,False,True,False,True],"trend_o35":"→ Stabil","trend_o35_color":"#94a3b8","recent_3_o35":o35a,
+               "win_home_pct":50.0,"draw_home_pct":25.0,"loss_home_pct":25.0,
+               "win_away_pct":35.0,"draw_away_pct":25.0,"loss_away_pct":40.0}
         return {"fixture_id":fid,"home_team":ht,"away_team":at,"league":lg,"country":"","time":ti,
                 "gg_home_ctx":ghc,"gg_away_ctx":gac,"combined":comb,
                 "conf_level":lvl,"conf_label":lbl,"conf_color":col,"is_recommended":comb>=THRESHOLD_GG,
                 "home_ctx_valid":True,"away_ctx_valid":True,"data_warning":dw,
                 "h2h_gg":h2h if h2h_c>=3 else None,"h2h_o25":h2h_o25 if h2h_c>=3 else None,
+                "h2h_o35":h2h_o35_v if h2h_c>=3 else None,
                 "h2h_count":h2h_c,
                 "home_stats":hs,"away_stats":as_,"home_injured":hi,"away_injured":ai,
                 "o25_home_ctx":o25h,"o25_away_ctx":o25a,"combined_o25":comb_o25,
                 "conf_level_o25":lvl_o,"conf_label_o25":lbl_o,"conf_color_o25":col_o,
                 "is_recommended_o25":comb_o25>=THRESHOLD_O25,
+                "o35_home_ctx":o35h,"o35_away_ctx":o35a,"combined_o35":comb_o35,
+                "conf_level_o35":lvl_o35,"conf_label_o35":lbl_o35,"conf_color_o35":col_o35,
+                "is_recommended_o35":comb_o35>=THRESHOLD_O35,
+                "prob_1":prob_1_d,"prob_x":prob_x_d,"prob_2":prob_2_d,
+                "best_1x2":best_1x2_d,"best_1x2_pct":best_1x2_pct_d,
+                "conf_level_1x2":lvl_1x2,"conf_label_1x2":lbl_1x2,"conf_color_1x2":col_1x2,
+                "is_recommended_1x2":best_1x2_pct_d>=THRESHOLD_1X2,
                 "is_combo":is_combo}
     return [
         mk("1","Inter Milan","AC Milan","Serie A","20:45",88.0,84.0,80.0,8,[],[],
@@ -484,7 +673,7 @@ for en,ro in months_ro.items():
 st.markdown(f"""
 <div class="main-header">
     <h1>🏔️ NORD ALLASKA SUPREME</h1>
-    <p>Analiză statistică · <strong>GG</strong> + <strong>Over 2.5</strong> + <strong>🔥 COMBO</strong> · {today_str}</p>
+    <p>Analiză statistică · <strong>GG</strong> + <strong>Over 2.5</strong> + <strong>Over 3.5</strong> + <strong>1X2</strong> + <strong>🔥 COMBO</strong> · {today_str}</p>
 </div>""", unsafe_allow_html=True)
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
@@ -530,6 +719,8 @@ if is_demo:
 matches = [m for m in matches if (
     m["conf_level"] == "gold"
     or m.get("conf_level_o25") == "gold"
+    or m.get("conf_level_o35") == "gold"
+    or m.get("conf_level_1x2") == "gold"
     or m.get("is_combo", False)
 )]
 
@@ -540,14 +731,18 @@ total      = len(matches)
 gold_gg    = sum(1 for m in matches if m["conf_level"]=="gold")
 combo_cnt  = sum(1 for m in matches if m.get("is_combo"))
 gold_o25   = sum(1 for m in matches if m.get("conf_level_o25")=="gold")
+gold_o35   = sum(1 for m in matches if m.get("conf_level_o35")=="gold")
+gold_1x2   = sum(1 for m in matches if m.get("conf_level_1x2")=="gold")
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-c1,c2,c3,c4 = st.columns(4)
+c1,c2,c3,c4,c5,c6 = st.columns(6)
 for col,val,label,color in [
     (c1, str(total),          "Meciuri recomandate", "#38bdf8"),
     (c2, f"🥇 {gold_gg}",    "GG Gold (≥85%)",      "#f59e0b"),
     (c3, f"⚽ {gold_o25}",    "O2.5 Gold (≥80%)",    "#ec4899"),
-    (c4, f"🔥 {combo_cnt}",   "COMBO GG+O2.5",       "#8b5cf6"),
+    (c4, f"⚽ {gold_o35}",    "O3.5 Gold (≥80%)",    "#14b8a6"),
+    (c5, f"🏆 {gold_1x2}",   "1X2 Gold (≥60%)",     "#a78bfa"),
+    (c6, f"🔥 {combo_cnt}",   "COMBO GG+O2.5",       "#8b5cf6"),
 ]:
     col.markdown(
         f"<div class='metric-card'><div class='value' style='color:{color};'>{val}</div>"
@@ -563,7 +758,7 @@ _, fcol_market, _ = st.columns([3, 2, 3])
 with fcol_market:
     market_filter = st.selectbox(
         "📊 Selectează piața",
-        options=["GG + Over 2.5", "Doar GG", "Doar Over 2.5", "🔥 COMBO"],
+        options=["Toate piețele", "Doar GG", "Doar Over 2.5", "Doar Over 3.5", "Doar 1X2", "🔥 COMBO"],
         index=0
     )
 
@@ -572,6 +767,10 @@ if market_filter == "Doar GG":
     filtered_matches = [m for m in matches if m["conf_level"] == "gold"]
 elif market_filter == "Doar Over 2.5":
     filtered_matches = [m for m in matches if m.get("conf_level_o25") == "gold"]
+elif market_filter == "Doar Over 3.5":
+    filtered_matches = [m for m in matches if m.get("conf_level_o35") == "gold"]
+elif market_filter == "Doar 1X2":
+    filtered_matches = [m for m in matches if m.get("conf_level_1x2") == "gold"]
 elif market_filter == "🔥 COMBO":
     filtered_matches = [m for m in matches if m.get("is_combo", False)]
 else:
@@ -588,6 +787,14 @@ if market_filter == "Doar Over 2.5":
     sorted_matches = sorted(filtered_matches, key=lambda x: (
         0 if x.get("conf_level_o25")=="gold" else 1 if x.get("conf_level_o25")=="silver"
         else 2 if x.get("conf_level_o25")=="bronze" else 3, -x.get("combined_o25",0)))
+elif market_filter == "Doar Over 3.5":
+    sorted_matches = sorted(filtered_matches, key=lambda x: (
+        0 if x.get("conf_level_o35")=="gold" else 1 if x.get("conf_level_o35")=="silver"
+        else 2 if x.get("conf_level_o35")=="bronze" else 3, -x.get("combined_o35",0)))
+elif market_filter == "Doar 1X2":
+    sorted_matches = sorted(filtered_matches, key=lambda x: (
+        0 if x.get("conf_level_1x2")=="gold" else 1 if x.get("conf_level_1x2")=="silver"
+        else 2 if x.get("conf_level_1x2")=="bronze" else 3, -x.get("best_1x2_pct",0)))
 elif market_filter == "🔥 COMBO":
     sorted_matches = sorted(filtered_matches, key=lambda x: (
         0 if x.get("is_combo") else 1,
@@ -600,14 +807,14 @@ else:
 # ─────────────────────────────────────────────
 # TABEL
 # ─────────────────────────────────────────────
-market_label = {"GG + Over 2.5":"GG + Over 2.5","Doar GG":"GG","Doar Over 2.5":"Over 2.5","🔥 COMBO":"COMBO"}.get(market_filter, "GG")
+market_label = {"Toate piețele":"Toate piețele","Doar GG":"GG","Doar Over 2.5":"Over 2.5","Doar Over 3.5":"Over 3.5","Doar 1X2":"1X2","🔥 COMBO":"COMBO"}.get(market_filter, "Toate")
 st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>📊 {market_label} — Analiza Meciurilor "
             f"<span style='font-size:0.8rem;color:#64748b;font-weight:400;'>({len(sorted_matches)} din {len(matches)} meciuri)</span></div>",
             unsafe_allow_html=True)
 
 # Header tabel
-h_cols = st.columns([0.6, 1.7, 1.7, 1.5, 1.2, 1.2, 1.0, 1.0])
-headers = ["🕐","🏟️ Gazdă","✈️ Oaspete","🏆 Liga","🏠 GG%","✈️ GG%","⚽ O2.5","📈 Scor"]
+h_cols = st.columns([0.5, 1.5, 1.5, 1.3, 1.0, 1.0, 0.8, 0.8, 0.8, 1.0])
+headers = ["🕐","🏟️ Gazdă","✈️ Oaspete","🏆 Liga","🏠 GG%","✈️ GG%","⚽ O2.5","⚽ O3.5","🏆 1X2","📈 Scor"]
 for col,h in zip(h_cols, headers):
     col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
 st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">', unsafe_allow_html=True)
@@ -616,6 +823,7 @@ for i, m in enumerate(sorted_matches):
     lvl   = m["conf_level"]
     comb  = m["combined"]
     comb_o = m.get("combined_o25", 0)
+    comb_o35 = m.get("combined_o35", 0)
     hs    = m["home_stats"]
     as_   = m["away_stats"]
     dw    = m.get("data_warning", False)
@@ -637,7 +845,7 @@ for i, m in enumerate(sorted_matches):
     combo_html = '<span class="badge-combo">🔥 COMBO</span>' if combo else ""
     warn_html  = '<span class="warn-tag">⚠️ Date limitate</span>' if dw else ""
 
-    cols = st.columns([0.6, 1.7, 1.7, 1.5, 1.2, 1.2, 1.0, 1.0])
+    cols = st.columns([0.5, 1.5, 1.5, 1.3, 1.0, 1.0, 0.8, 0.8, 0.8, 1.0])
 
     # Ora
     cols[0].markdown(
@@ -702,7 +910,27 @@ for i, m in enumerate(sorted_matches):
         f"<div style='text-align:center;'>"
         f"<div style='font-size:1.05rem;font-weight:700;color:{o25_col};'>{comb_o}%</div>"
         f"<div class='prob-bar-container'><div class='prob-bar' style='width:{comb_o}%;background:{prob_gradient(comb_o)};'></div></div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>Over 2.5</div></div>",
+        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>O2.5</div></div>",
+        unsafe_allow_html=True)
+
+    # Over 3.5% Combined
+    o35_col = val_color(comb_o35)
+    cols[7].markdown(
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:1.05rem;font-weight:700;color:{o35_col};'>{comb_o35}%</div>"
+        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{comb_o35}%;background:{prob_gradient(comb_o35)};'></div></div>"
+        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>O3.5</div></div>",
+        unsafe_allow_html=True)
+
+    # 1X2 Best Pick
+    best_1x2 = m.get("best_1x2", "1")
+    best_1x2_pct = m.get("best_1x2_pct", 0)
+    color_1x2 = m.get("conf_color_1x2", "#64748b")
+    cols[8].markdown(
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:1.05rem;font-weight:700;color:{color_1x2};'>{best_1x2}</div>"
+        f"<div style='font-size:0.8rem;font-weight:600;color:{color_1x2};'>{best_1x2_pct}%</div>"
+        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>1X2</div></div>",
         unsafe_allow_html=True)
 
     # Prob GG combinat
@@ -713,7 +941,7 @@ for i, m in enumerate(sorted_matches):
         "rgba(180,83,9,0.10)"   if lvl=="bronze" else
         "rgba(255,255,255,0.04)"
     )
-    cols[7].markdown(
+    cols[9].markdown(
         f"<div style='text-align:center;background:{prob_bg};border-radius:10px;padding:6px 4px;'>"
         f"<span style='font-size:1.15rem;font-weight:800;color:{m['conf_color']};'>{comb}%</span>"
         f"<div style='font-size:0.6rem;color:#64748b;'>GG</div></div>",
