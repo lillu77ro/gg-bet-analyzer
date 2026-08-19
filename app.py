@@ -94,7 +94,7 @@ MAX_MATCHES    = 50
 MIN_CTX        = 3      # minim meciuri context pentru a fi considerat valid
 RO_TZ          = timezone(timedelta(hours=3))
 
-EXCLUDE_WORDS = ["Women"," W ","Youth","U20","U21","U23","Reserve","Friendly","Beach","Futsal","Indoor"]
+EXCLUDE_WORDS = ["Women"," W ","Youth","U17","U19","U20","U21","U23","Reserve","Friendly","Friendlies","Beach","Futsal","Indoor"]
 
 # ─────────────────────────────────────────────
 # HTTP
@@ -832,18 +832,18 @@ else:
         else 2 if x["conf_level"]=="bronze" else 3, -x["combined"]))
 
 # ─────────────────────────────────────────────
-# TABEL
+# TABEL SIMPLIFICAT
 # ─────────────────────────────────────────────
 market_label = {"Toate piețele":"Toate piețele","Doar GG":"GG","Doar Over 2.5":"Over 2.5","Doar Over 3.5":"Over 3.5","Doar 1X2":"1X2","🔥 COMBO":"COMBO"}.get(market_filter, "Toate")
-st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>📊 {market_label} — Analiza Meciurilor "
+st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>📊 {market_label} — Meciuri Recomandate "
             f"<span style='font-size:0.8rem;color:#64748b;font-weight:400;'>({len(sorted_matches)} din {len(matches)} meciuri)</span></div>",
             unsafe_allow_html=True)
 
 # Header tabel
-h_cols = st.columns([0.5, 1.5, 1.5, 1.3, 1.0, 1.0, 0.8, 0.8, 0.8, 1.0])
-headers = ["🕐","🏟️ Gazdă","✈️ Oaspete","🏆 Liga","🏠 GG%","✈️ GG%","⚽ O2.5","⚽ O3.5","🏆 1X2","📈 Scor"]
+h_cols = st.columns([0.5, 2.5, 1.5, 2.5])
+headers = ["🕐","⚽ Meci","🏆 Liga","🎯 Pronostic Recomandat"]
 for col,h in zip(h_cols, headers):
-    col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
+    col.markdown(f"<span style='font-size:0.75rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
 st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">', unsafe_allow_html=True)
 
 for i, m in enumerate(sorted_matches):
@@ -851,184 +851,119 @@ for i, m in enumerate(sorted_matches):
     comb  = m["combined"]
     comb_o = m.get("combined_o25", 0)
     comb_o35 = m.get("combined_o35", 0)
-    hs    = m["home_stats"]
-    as_   = m["away_stats"]
-    dw    = m.get("data_warning", False)
     combo = m.get("is_combo", False)
+    dw    = m.get("data_warning", False)
 
-    # Border color based on best level
+    # Determinăm toate pronosticurile Gold
+    picks = []
     if combo:
-        border = "border-left:3px solid #ec4899;"
+        picks.append(("🔥 COMBO GG+O2.5", max(comb, comb_o), "#ec4899"))
+    if m.get("conf_level") == "gold":
+        picks.append((f"GG ({comb}%)", comb, "#f59e0b"))
+    if m.get("conf_level_o25") == "gold":
+        picks.append((f"Over 2.5 ({comb_o}%)", comb_o, "#ec4899"))
+    if m.get("conf_level_o35") == "gold":
+        picks.append((f"Over 3.5 ({comb_o35}%)", comb_o35, "#14b8a6"))
+    if m.get("conf_level_1x2") == "gold":
+        best_1x2 = m.get("best_1x2", "1")
+        best_1x2_pct = m.get("best_1x2_pct", 0)
+        label_map = {"1": "1 Gazdă", "X": "X Egal", "2": "2 Oaspete"}
+        picks.append((f"{label_map.get(best_1x2, best_1x2)} ({best_1x2_pct}%)", best_1x2_pct, "#a78bfa"))
+    picks.sort(key=lambda x: x[1], reverse=True)
+
+    # Border color
+    if combo:
+        border = "border-left:4px solid #ec4899;"
     elif lvl == "gold":
-        border = "border-left:3px solid #f59e0b;"
-    elif lvl == "silver":
-        border = "border-left:3px solid #94a3b8;"
-    elif lvl == "bronze":
-        border = "border-left:3px solid #b45309;"
+        border = "border-left:4px solid #f59e0b;"
     else:
-        border = "border-left:3px solid transparent;"
+        border = "border-left:4px solid #94a3b8;"
 
-    badge_html = f'<span class="badge-{lvl}">{m["conf_label"]}</span>' if lvl!="none" else ""
-    combo_html = '<span class="badge-combo">🔥 COMBO</span>' if combo else ""
-    warn_html  = '<span class="warn-tag">⚠️ Date limitate</span>' if dw else ""
+    warn_html = ' <span class="warn-tag">⚠️</span>' if dw else ""
 
-    cols = st.columns([0.5, 1.5, 1.5, 1.3, 1.0, 1.0, 0.8, 0.8, 0.8, 1.0])
+    cols = st.columns([0.5, 2.5, 1.5, 2.5])
 
     # Ora
     cols[0].markdown(
-        f"<div style='{border}padding-left:8px;font-weight:600;color:#cbd5e1;'>{m['time']}</div>",
+        f"<div style='{border}padding-left:10px;font-weight:700;color:#cbd5e1;font-size:1rem;'>{m['time']}</div>",
         unsafe_allow_html=True)
 
-    # Gazdă
-    h_form = form_html(hs.get("form_5",[]), "GG")
-    trend_h = hs["trend"]
-    tc_h    = hs["trend_color"]
+    # Meci
     cols[1].markdown(
-        f"<div style='font-weight:700;color:#f1f5f9;'>{m['home_team']} {badge_html} {combo_html} {warn_html}</div>"
-        f"<div style='margin-top:3px;'>{h_form}"
-        f"<span class='stat-mini' style='color:{tc_h};'>{trend_h}</span>"
-        f"<span class='stat-mini'>⚽ {hs['avg_goals']}/meci</span></div>",
+        f"<div style='font-weight:700;color:#f1f5f9;font-size:1.05rem;'>"
+        f"{m['home_team']} <span style='color:#64748b;font-weight:400;'>vs</span> {m['away_team']}{warn_html}</div>",
         unsafe_allow_html=True)
 
-    # Oaspete
-    a_form  = form_html(as_.get("form_5",[]), "GG")
-    trend_a = as_["trend"]
-    tc_a    = as_["trend_color"]
+    # Liga
     cols[2].markdown(
-        f"<div style='font-weight:500;color:#e2e8f0;'>{m['away_team']}</div>"
-        f"<div style='margin-top:3px;'>{a_form}"
-        f"<span class='stat-mini' style='color:{tc_a};'>{trend_a}</span>"
-        f"<span class='stat-mini'>⚽ {as_['avg_goals']}/meci</span></div>",
+        f"<div style='font-size:0.85rem;color:#94a3b8;'>{m['league']}</div>"
+        f"<div style='font-size:0.72rem;color:#475569;'>{m['country']}</div>",
         unsafe_allow_html=True)
 
-    # Liga + H2H
-    h2h_html = ""
-    if m.get("h2h_gg") is not None:
-        h2h_html = f"<br><span class='h2h-tag'>🤝 H2H GG: {m['h2h_gg']}%</span>"
-    if m.get("h2h_o25") is not None:
-        h2h_html += f" <span class='h2h-tag'>⚽ H2H O2.5: {m['h2h_o25']}%</span>"
-    cols[3].markdown(
-        f"<div style='font-size:0.8rem;color:#94a3b8;'>{m['league']}</div>"
-        f"<div style='font-size:0.7rem;color:#475569;'>{m['country']}</div>"
-        f"{h2h_html}",
-        unsafe_allow_html=True)
+    # Pronostic Recomandat
+    picks_html = ""
+    for pick_label, pick_pct, pick_color in picks:
+        r_val = int(pick_color.lstrip("#")[0:2], 16)
+        g_val = int(pick_color.lstrip("#")[2:4], 16)
+        b_val = int(pick_color.lstrip("#")[4:6], 16)
+        picks_html += (
+            f"<span style='display:inline-block;background:rgba({r_val},{g_val},{b_val},0.15);"
+            f"border:1px solid {pick_color};color:{pick_color};font-size:0.85rem;"
+            f"font-weight:700;padding:4px 12px;border-radius:10px;margin:2px 4px 2px 0;'>"
+            f"{pick_label}</span> "
+        )
+    if not picks_html:
+        best_pct = max(comb, comb_o, comb_o35)
+        if best_pct == comb:
+            picks_html = f"<span style='color:#94a3b8;font-size:0.85rem;'>GG ({comb}%)</span>"
+        elif best_pct == comb_o:
+            picks_html = f"<span style='color:#94a3b8;font-size:0.85rem;'>Over 2.5 ({comb_o}%)</span>"
+        else:
+            picks_html = f"<span style='color:#94a3b8;font-size:0.85rem;'>Over 3.5 ({comb_o35}%)</span>"
+    cols[3].markdown(picks_html, unsafe_allow_html=True)
 
-    # GG% Acasă
-    gg_h = m["gg_home_ctx"]
-    ctx_warn_h = "" if m.get("home_ctx_valid") else " ⚠️"
-    cols[4].markdown(
-        f"<div style='font-size:1.05rem;font-weight:700;color:{val_color(gg_h)};'>{gg_h}%{ctx_warn_h}</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{gg_h}%;background:{prob_gradient(gg_h)};'></div></div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>({hs['home_m']} acasă)</div>",
-        unsafe_allow_html=True)
-
-    # GG% Deplasare
-    gg_a = m["gg_away_ctx"]
-    ctx_warn_a = "" if m.get("away_ctx_valid") else " ⚠️"
-    cols[5].markdown(
-        f"<div style='font-size:1.05rem;font-weight:700;color:{val_color(gg_a)};'>{gg_a}%{ctx_warn_a}</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{gg_a}%;background:{prob_gradient(gg_a)};'></div></div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>({as_['away_m']} depl.)</div>",
-        unsafe_allow_html=True)
-
-    # Over 2.5% Combined
-    o25_col = val_color(comb_o)
-    cols[6].markdown(
-        f"<div style='text-align:center;'>"
-        f"<div style='font-size:1.05rem;font-weight:700;color:{o25_col};'>{comb_o}%</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{comb_o}%;background:{prob_gradient(comb_o)};'></div></div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>O2.5</div></div>",
-        unsafe_allow_html=True)
-
-    # Over 3.5% Combined
-    o35_col = val_color(comb_o35)
-    cols[7].markdown(
-        f"<div style='text-align:center;'>"
-        f"<div style='font-size:1.05rem;font-weight:700;color:{o35_col};'>{comb_o35}%</div>"
-        f"<div class='prob-bar-container'><div class='prob-bar' style='width:{comb_o35}%;background:{prob_gradient(comb_o35)};'></div></div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>O3.5</div></div>",
-        unsafe_allow_html=True)
-
-    # 1X2 Best Pick
-    best_1x2 = m.get("best_1x2", "1")
-    best_1x2_pct = m.get("best_1x2_pct", 0)
-    color_1x2 = m.get("conf_color_1x2", "#64748b")
-    cols[8].markdown(
-        f"<div style='text-align:center;'>"
-        f"<div style='font-size:1.05rem;font-weight:700;color:{color_1x2};'>{best_1x2}</div>"
-        f"<div style='font-size:0.8rem;font-weight:600;color:{color_1x2};'>{best_1x2_pct}%</div>"
-        f"<div style='font-size:0.68rem;color:#475569;margin-top:2px;'>1X2</div></div>",
-        unsafe_allow_html=True)
-
-    # Prob GG combinat
-    prob_bg = (
-        "rgba(236,72,153,0.15)" if combo else
-        "rgba(245,158,11,0.12)" if lvl=="gold" else
-        "rgba(56,189,248,0.10)" if lvl=="silver" else
-        "rgba(180,83,9,0.10)"   if lvl=="bronze" else
-        "rgba(255,255,255,0.04)"
-    )
-    cols[9].markdown(
-        f"<div style='text-align:center;background:{prob_bg};border-radius:10px;padding:6px 4px;'>"
-        f"<span style='font-size:1.15rem;font-weight:800;color:{m['conf_color']};'>{comb}%</span>"
-        f"<div style='font-size:0.6rem;color:#64748b;'>GG</div></div>",
-        unsafe_allow_html=True)
-
-    # Detalii expandabile
+    # Detalii expandabile (calcule ascunse)
     with st.expander(f"📊 Detalii: {m['home_team']} vs {m['away_team']}"):
+        hs = m["home_stats"]
+        as_ = m["away_stats"]
         dc1, dc2, dc3 = st.columns(3)
         with dc1:
-            vc_h = "#34d399" if m.get("home_ctx_valid") else "#fcd34d"
-            o25_form_h = form_html(hs.get("form_5_o25",[]), "O2.5")
             st.markdown(
                 f"<div style='font-weight:700;color:#38bdf8;margin-bottom:8px;'>🏠 {m['home_team']}</div>"
                 f"<div style='font-size:0.82rem;color:#94a3b8;line-height:2;'>"
-                f"GG% Total: <strong style='color:#e2e8f0;'>{hs['gg_all']}%</strong><br>"
-                f"GG% Acasă: <strong style='color:{vc_h};'>{hs['gg_home']}%</strong> ({hs['home_m']} meci)<br>"
-                f"O2.5% Total: <strong style='color:#ec4899;'>{hs['o25_all']}%</strong><br>"
-                f"O2.5% Acasă: <strong style='color:#ec4899;'>{hs['o25_home']}%</strong><br>"
-                f"Medie goluri: <strong style='color:#f59e0b;'>{hs['avg_goals']}/meci</strong><br>"
-                f"Trend GG: <strong style='color:{hs['trend_color']};'>{hs['trend']}</strong><br>"
-                f"Trend O2.5: <strong style='color:{hs['trend_o25_color']};'>{hs['trend_o25']}</strong>"
-                f"</div>"
-                f"<div style='margin-top:4px;'>{o25_form_h}</div>",
-                unsafe_allow_html=True)
+                f"GG%: <strong style='color:#e2e8f0;'>{hs['gg_all']}%</strong> (acasă: {hs['gg_home']}%)<br>"
+                f"O2.5%: <strong style='color:#ec4899;'>{hs['o25_all']}%</strong> (acasă: {hs['o25_home']}%)<br>"
+                f"O3.5%: <strong style='color:#14b8a6;'>{hs.get('o35_all',0)}%</strong><br>"
+                f"Medie: <strong style='color:#f59e0b;'>{hs['avg_goals']}/meci</strong><br>"
+                f"Trend: <strong style='color:{hs['trend_color']};'>{hs['trend']}</strong>"
+                f"</div>", unsafe_allow_html=True)
         with dc2:
-            vc_a = "#34d399" if m.get("away_ctx_valid") else "#fcd34d"
-            o25_form_a = form_html(as_.get("form_5_o25",[]), "O2.5")
             st.markdown(
                 f"<div style='font-weight:700;color:#818cf8;margin-bottom:8px;'>✈️ {m['away_team']}</div>"
                 f"<div style='font-size:0.82rem;color:#94a3b8;line-height:2;'>"
-                f"GG% Total: <strong style='color:#e2e8f0;'>{as_['gg_all']}%</strong><br>"
-                f"GG% Depl.: <strong style='color:{vc_a};'>{as_['gg_away']}%</strong> ({as_['away_m']} meci)<br>"
-                f"O2.5% Total: <strong style='color:#ec4899;'>{as_['o25_all']}%</strong><br>"
-                f"O2.5% Depl.: <strong style='color:#ec4899;'>{as_['o25_away']}%</strong><br>"
-                f"Medie goluri: <strong style='color:#f59e0b;'>{as_['avg_goals']}/meci</strong><br>"
-                f"Trend GG: <strong style='color:{as_['trend_color']};'>{as_['trend']}</strong><br>"
-                f"Trend O2.5: <strong style='color:{as_['trend_o25_color']};'>{as_['trend_o25']}</strong>"
-                f"</div>"
-                f"<div style='margin-top:4px;'>{o25_form_a}</div>",
-                unsafe_allow_html=True)
+                f"GG%: <strong style='color:#e2e8f0;'>{as_['gg_all']}%</strong> (depl.: {as_['gg_away']}%)<br>"
+                f"O2.5%: <strong style='color:#ec4899;'>{as_['o25_all']}%</strong> (depl.: {as_['o25_away']}%)<br>"
+                f"O3.5%: <strong style='color:#14b8a6;'>{as_.get('o35_all',0)}%</strong><br>"
+                f"Medie: <strong style='color:#f59e0b;'>{as_['avg_goals']}/meci</strong><br>"
+                f"Trend: <strong style='color:{as_['trend_color']};'>{as_['trend']}</strong>"
+                f"</div>", unsafe_allow_html=True)
         with dc3:
+            h2h_text = ""
             if m.get("h2h_gg") is not None:
-                h2h_pct = m["h2h_gg"]
-                h2h_o25_pct = m.get("h2h_o25", 0)
-                h2h_col = val_color(h2h_pct)
-                st.markdown(
-                    f"<div style='font-weight:700;color:#34d399;margin-bottom:8px;'>🤝 Față în Față (H2H)</div>"
-                    f"<div style='font-size:0.82rem;color:#94a3b8;line-height:2;'>"
-                    f"GG% H2H: <strong style='color:{h2h_col};font-size:1.1rem;'>{h2h_pct}%</strong><br>"
-                    f"O2.5% H2H: <strong style='color:#ec4899;font-size:1.1rem;'>{h2h_o25_pct}%</strong><br>"
-                    f"Meciuri analizate: <strong style='color:#e2e8f0;'>{m['h2h_count']}</strong><br>"
-                    f"<span style='font-size:0.75rem;color:#475569;'>"
-                    f"Ponderat 20% în scorul final</span>"
-                    f"</div>", unsafe_allow_html=True)
+                h2h_text = (
+                    f"H2H GG: <strong style='color:#34d399;'>{m['h2h_gg']}%</strong><br>"
+                    f"H2H O2.5: <strong style='color:#ec4899;'>{m.get('h2h_o25',0)}%</strong><br>"
+                    f"Meciuri: <strong>{m['h2h_count']}</strong><br>")
             else:
-                st.markdown(
-                    f"<div style='font-weight:700;color:#475569;margin-bottom:8px;'>🤝 Față în Față (H2H)</div>"
-                    f"<div style='font-size:0.8rem;color:#475569;'>"
-                    f"Date H2H insuficiente<br>(sub 3 meciuri directe)</div>",
-                    unsafe_allow_html=True)
+                h2h_text = "H2H: date insuficiente<br>"
+            st.markdown(
+                f"<div style='font-weight:700;color:#34d399;margin-bottom:8px;'>🤝 H2H + 1X2</div>"
+                f"<div style='font-size:0.82rem;color:#94a3b8;line-height:2;'>"
+                f"{h2h_text}"
+                f"1: <strong style='color:#f59e0b;'>{m.get('prob_1',0)}%</strong> | "
+                f"X: <strong style='color:#94a3b8;'>{m.get('prob_x',0)}%</strong> | "
+                f"2: <strong style='color:#818cf8;'>{m.get('prob_2',0)}%</strong>"
+                f"</div>", unsafe_allow_html=True)
 
     if i < len(sorted_matches)-1:
         st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.5rem 0;">', unsafe_allow_html=True)
