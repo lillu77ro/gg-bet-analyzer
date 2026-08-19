@@ -1,6 +1,6 @@
 """
 NORD ALLASKA SUPREME – Analiză statistică GG + Over 2.5
-Surse date: TheSportsDB (gratuit, nelimitat)
+Surse date: API-Football (v3.football.api-sports.io)
 Features v5:
   - GG% Acasă/Deplasare split contextual
   - Over 2.5 Goals (3+ goluri/meci)
@@ -82,7 +82,9 @@ html,body,[class*="css"]{ font-family:'Inter',sans-serif; }
 # ─────────────────────────────────────────────
 # CONSTANTE
 # ─────────────────────────────────────────────
-SPORTSDB_BASE  = "https://www.thesportsdb.com/api/v1/json/3"
+API_KEY = '281e7a0cf284eeba705e2ae11f3d7722'
+API_BASE = 'https://v3.football.api-sports.io'
+API_HEADERS = {'x-apisports-key': API_KEY}
 THRESHOLD_GG   = 80.0
 THRESHOLD_O25  = 80.0
 THRESHOLD_O35  = 80.0
@@ -97,69 +99,94 @@ EXCLUDE_WORDS = ["Women"," W ","Youth","U20","U21","U23","Reserve","Friendly","B
 # ─────────────────────────────────────────────
 # HTTP
 # ─────────────────────────────────────────────
-def sportsdb_get(endpoint):
+def api_get(endpoint, params=None):
     try:
-        r = requests.get(f"{SPORTSDB_BASE}{endpoint}", timeout=15)
+        r = requests.get(f"{API_BASE}{endpoint}", headers=API_HEADERS, params=params, timeout=15)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        return data.get('response', [])
     except Exception:
-        return None
+        return []
 
 # ─────────────────────────────────────────────
 # FETCH DATE
 # ─────────────────────────────────────────────
 def fetch_todays_fixtures():
-    today = date.today().strftime("%Y-%m-%d")
-    data  = sportsdb_get(f"/eventsday.php?d={today}&s=Soccer")
-    if not data or not data.get("events"):
-        return []
+    today = date.today().strftime('%Y-%m-%d')
+    events = api_get('/fixtures', {'date': today})
     fixtures = []
-    for ev in data["events"]:
-        if ev.get("intHomeScore") not in (None,""):
+    for ev in events:
+        fixture = ev.get('fixture', {})
+        teams = ev.get('teams', {})
+        league = ev.get('league', {})
+        goals = ev.get('goals', {})
+        
+        # Skip already played
+        if fixture.get('status', {}).get('short') != 'NS':
             continue
-        league_name = ev.get("strLeague","") or ""
+        
+        league_name = league.get('name', '')
+        # Filter out excluded leagues
         if any(w in league_name for w in EXCLUDE_WORDS):
             continue
-        home_id = ev.get("idHomeTeam")
-        away_id = ev.get("idAwayTeam")
+        
+        home_id = teams.get('home', {}).get('id')
+        away_id = teams.get('away', {}).get('id')
         if not home_id or not away_id:
             continue
-        time_raw = ev.get("strTime") or ""
-        date_raw = ev.get("dateEvent") or today
-        time_str = "N/A"
-        if time_raw:
+        
+        time_str = 'N/A'
+        date_str = fixture.get('date', '')
+        if date_str:
             try:
-                dt = datetime.strptime(f"{date_raw} {time_raw[:8]}","%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                time_str = dt.astimezone(RO_TZ).strftime("%H:%M")
+                dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                time_str = dt.astimezone(RO_TZ).strftime('%H:%M')
             except Exception:
-                time_str = time_raw[:5] if len(time_raw)>=5 else "N/A"
+                time_str = date_str[11:16] if len(date_str) > 16 else 'N/A'
+        
         fixtures.append({
-            "fixture_id":   ev.get("idEvent",""),
-            "home_team":    ev.get("strHomeTeam","N/A"),
-            "away_team":    ev.get("strAwayTeam","N/A"),
-            "home_team_id": home_id,
-            "away_team_id": away_id,
-            "league":       league_name,
-            "country":      ev.get("strCountry",""),
-            "time":         time_str,
-            "timestamp":    f"{date_raw}T{time_raw}" if time_raw else date_raw,
+            'fixture_id': str(fixture.get('id', '')),
+            'home_team': teams.get('home', {}).get('name', 'N/A'),
+            'away_team': teams.get('away', {}).get('name', 'N/A'),
+            'home_team_id': home_id,
+            'away_team_id': away_id,
+            'league': league_name,
+            'country': league.get('country', ''),
+            'time': time_str,
+            'timestamp': date_str,
         })
-    return sorted(fixtures, key=lambda x: x["timestamp"])[:MAX_MATCHES]
+    return sorted(fixtures, key=lambda x: x['timestamp'])[:MAX_MATCHES]
 
 
 def fetch_team_last_matches(team_id):
-    data = sportsdb_get(f"/eventslast.php?id={team_id}")
-    if not data or not data.get("results"):
-        return []
-    return data["results"][:NUM_MATCHES]
+    events = api_get('/fixtures', {'team': team_id, 'last': NUM_MATCHES})
+    # Convert to a compatible format for calc_stats
+    results = []
+    for ev in events:
+        teams = ev.get('teams', {})
+        goals = ev.get('goals', {})
+        results.append({
+            'idHomeTeam': str(teams.get('home', {}).get('id', '')),
+            'idAwayTeam': str(teams.get('away', {}).get('id', '')),
+            'intHomeScore': goals.get('home'),
+            'intAwayScore': goals.get('away'),
+        })
+    return results
 
 
 def fetch_h2h(home_id, away_id):
-    """Preia ultimele meciuri directe (H2H) între cele 2 echipe."""
-    data = sportsdb_get(f"/lookupeventh2h.php?id1={home_id}&id2={away_id}")
-    if not data or not data.get("event"):
-        return []
-    return data["event"][:10]
+    events = api_get('/fixtures/headtohead', {'h2h': f'{home_id}-{away_id}', 'last': 10})
+    results = []
+    for ev in events:
+        teams = ev.get('teams', {})
+        goals = ev.get('goals', {})
+        results.append({
+            'idHomeTeam': str(teams.get('home', {}).get('id', '')),
+            'idAwayTeam': str(teams.get('away', {}).get('id', '')),
+            'intHomeScore': goals.get('home'),
+            'intAwayScore': goals.get('away'),
+        })
+    return results
 
 
 # ─────────────────────────────────────────────
@@ -687,7 +714,7 @@ with col_btn:
         st.rerun()
 st.markdown(
     "<div style='text-align:center;font-size:0.72rem;color:#475569;margin-top:4px;'>"
-    "Date actualizate automat · TheSportsDB (gratuit, nelimitat)"
+    "Date actualizate automat · API-Football PRO (7,500 cereri/zi)"
     "</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
@@ -707,7 +734,7 @@ def load_all_data():
         return demo_data(), True
     return analyzed, False
 
-with st.spinner("⏳ Se preiau meciurile, statistici GG, Over 2.5, H2H și trend..."):
+with st.spinner("⏳ Se preiau meciurile și statisticile de la API-Football..."):
     matches, is_demo = load_all_data()
 
 if is_demo:
@@ -1196,7 +1223,7 @@ with st.expander("📐 Metodologie & Legendă"):
 - ↗️ În creștere = ultimele 3 cu 15%+ peste medie
 - ↘️ În scădere = ultimele 3 cu 15%+ sub medie
 
-**Sursă**: [TheSportsDB](https://www.thesportsdb.com/) — gratuit, nelimitat.
+**Sursă**: [API-Football](https://v3.football.api-sports.io) — API-Football PRO (7,500 cereri/zi).
 """)
 
 # ─────────────────────────────────────────────
@@ -1210,6 +1237,6 @@ st.markdown("""
     Vârsta minimă legală în România: <strong>18 ani</strong>.
 </div>
 <div style="text-align:center;padding:1.5rem 0 0.5rem;color:#334155;font-size:0.75rem;">
-    NORD ALLASKA SUPREME v5 · Powered by TheSportsDB · Date actualizate la fiecare 12 ore
+    NORD ALLASKA SUPREME v5 · Powered by API-Football PRO · Date actualizate la fiecare 12 ore
 </div>
 """, unsafe_allow_html=True)
