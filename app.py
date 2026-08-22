@@ -66,9 +66,13 @@ NUM_MATCHES = 15
 NUM_H2H = 10
 RO_TZ = timezone(timedelta(hours=3))
 
-EXCLUDE_WORDS = ["Women"," W ","Youth","U17","U19","U20","U21","U23",
+EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
                  "Reserve","Friendly","Friendlies","Beach","Futsal","Indoor",
-                 "Esports","eSports","Cyber"]
+                 "Esports","eSports","Cyber","Damallsvenskan","Toppserien",
+                 "NWSL","Frauen","Femminile","Femenina","Feminina"]
+
+# Also filter team names (catch " W" suffix)
+EXCLUDE_TEAM_SUFFIXES = [" W", " Women", " Ladies", " Femenino", " Femminile", " Frauen"]
 
 SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
                   "Double Chance","Home/Away","Goals Over/Under First Half"}
@@ -122,6 +126,11 @@ def fetch_fixtures(target_date):
         hid = teams.get("home", {}).get("id")
         aid = teams.get("away", {}).get("id")
         if not hid or not aid:
+            continue
+        # Filter Women/Youth teams by name
+        h_name = teams.get("home", {}).get("name", "")
+        a_name = teams.get("away", {}).get("name", "")
+        if any(h_name.endswith(s) or a_name.endswith(s) for s in EXCLUDE_TEAM_SUFFIXES):
             continue
         dt_str = fix.get("date", "")
         time_str = "N/A"
