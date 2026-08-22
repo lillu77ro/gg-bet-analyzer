@@ -133,7 +133,9 @@ def fetch_fixtures(target_date):
                 time_str = dt_str[11:16] if len(dt_str) > 16 else "N/A"
         fixtures.append({"fixture_id": fix.get("id"), "home_team": teams["home"]["name"],
             "away_team": teams["away"]["name"], "home_id": hid, "away_id": aid,
-            "league": ln, "country": league.get("country", ""), "time": time_str, "timestamp": dt_str})
+            "league": ln, "country": league.get("country", ""), "time": time_str, "timestamp": dt_str,
+            "league_id": league.get("id"), "season": league.get("season"),
+            "referee": fix.get("referee", "")})
     return sorted(fixtures, key=lambda x: x["timestamp"])
 
 def fetch_odds_bulk(target_date, bookmaker_id):
@@ -173,6 +175,125 @@ def fetch_h2h(home_id, away_id):
         results.append({"home_id": t.get("home", {}).get("id"), "away_id": t.get("away", {}).get("id"),
                         "home_goals": int(gh), "away_goals": int(ga)})
     return results
+
+def fetch_injuries(fixture_id):
+    """Fetch injured/suspended players for a fixture."""
+    data = api_get("/injuries", {"fixture": fixture_id})
+    home_inj = []
+    away_inj = []
+    for item in data:
+        player = item.get("player", {})
+        team = item.get("team", {})
+        info = {"name": player.get("name", "?"), "reason": player.get("reason", "?")}
+        if item.get("team", {}).get("id"):
+            # We'll sort by team later
+            home_inj.append(info)  # placeholder, sorted in main logic
+    return data
+
+def fetch_standings(league_id, season):
+    """Fetch league standings to determine team positions."""
+    data = api_get("/standings", {"league": league_id, "season": season})
+    if not data:
+        return {}
+    standings = {}
+    league_data = data[0].get("league", {}).get("standings", [[]])
+    for group in league_data:
+        for team in group:
+            tid = team.get("team", {}).get("id")
+            if tid:
+                standings[tid] = {
+                    "rank": team.get("rank", 0),
+                    "points": team.get("points", 0),
+                    "total_teams": len(group),
+                    "form": team.get("form", ""),
+                    "gd": team.get("goalsDiff", 0),
+                }
+    return standings
+
+def calc_rest_days(team_events):
+    """Calculate average days between matches from recent fixtures."""
+    if len(team_events) < 2:
+        return None
+    # We don't have dates in our simplified events, so we estimate
+    # from the number of matches in NUM_MATCHES window
+    # Average team plays ~2 matches/week = 3.5 days rest
+    return 3.5  # default estimation
+
+def adjust_probs(probs, home_id, away_id, fixture_id, league_id, season, standings_cache):
+    """Adjust probabilities based on injuries, standings, and context."""
+    adjustments = []
+
+    # --- INJURIES ---
+    inj_data = fetch_injuries(fixture_id)
+    home_injuries = [i for i in inj_data if i.get("team", {}).get("id") == home_id]
+    away_injuries = [i for i in inj_data if i.get("team", {}).get("id") == away_id]
+    n_home_inj = len(home_injuries)
+    n_away_inj = len(away_injuries)
+
+    # Each injury reduces team strength by ~2-3%
+    if n_home_inj >= 3:
+        probs["home"] = max(probs["home"] - (n_home_inj * 2.5), 5)
+        probs["away"] = min(probs["away"] + (n_home_inj * 1.5), 80)
+        adjustments.append(f"⚕️ Gazdă: {n_home_inj} accidentați (-{n_home_inj*2.5:.0f}%)")
+    if n_away_inj >= 3:
+        probs["away"] = max(probs["away"] - (n_away_inj * 2.5), 5)
+        probs["home"] = min(probs["home"] + (n_away_inj * 1.5), 80)
+        adjustments.append(f"⚕️ Oaspete: {n_away_inj} accidentați (-{n_away_inj*2.5:.0f}%)")
+
+    # --- STANDINGS ---
+    if league_id and season:
+        cache_key = f"{league_id}_{season}"
+        if cache_key not in standings_cache:
+            standings_cache[cache_key] = fetch_standings(league_id, season)
+        standings = standings_cache[cache_key]
+
+        h_pos = standings.get(home_id, {})
+        a_pos = standings.get(away_id, {})
+
+        if h_pos and a_pos:
+            h_rank = h_pos.get("rank", 0)
+            a_rank = a_pos.get("rank", 0)
+            total_t = h_pos.get("total_teams", 20)
+
+            # Big rank difference = adjust 1X2
+            if h_rank > 0 and a_rank > 0:
+                rank_diff = a_rank - h_rank  # positive = home is higher ranked
+                if abs(rank_diff) >= 8:
+                    adj = min(abs(rank_diff) * 0.5, 8)
+                    if rank_diff > 0:  # home better
+                        probs["home"] = min(probs["home"] + adj, 85)
+                        probs["away"] = max(probs["away"] - adj, 3)
+                        adjustments.append(f"📊 Gazdă #{h_rank} vs Oaspete #{a_rank} (+{adj:.0f}%)")
+                    else:  # away better
+                        probs["away"] = min(probs["away"] + adj, 75)
+                        probs["home"] = max(probs["home"] - adj, 5)
+                        adjustments.append(f"📊 Gazdă #{h_rank} vs Oaspete #{a_rank} (-{adj:.0f}%)")
+
+                # Relegation battle = more defensive = less goals
+                if h_rank >= total_t - 3 or a_rank >= total_t - 3:
+                    probs["over25"] = max(probs["over25"] - 5, 10)
+                    probs["under25"] = min(probs["under25"] + 5, 90)
+                    probs["gg"] = max(probs["gg"] - 3, 10)
+                    adjustments.append("⚠️ Luptă retrogradare (mai puține goluri)")
+
+                # Title fight = more intense, variable
+                if h_rank <= 3 and a_rank <= 3:
+                    adjustments.append("🏆 Duel la vârf!")
+
+    # Recalculate derived probabilities
+    probs["ng"] = round(100 - probs["gg"], 1)
+    probs["under15"] = round(100 - probs["over15"], 1)
+    probs["under25"] = round(100 - probs["over25"], 1)
+    probs["under35"] = round(100 - probs["over35"], 1)
+    probs["home_draw"] = round(probs["home"] + probs["draw"], 1)
+    probs["draw_away"] = round(probs["draw"] + probs["away"], 1)
+    probs["home_away"] = round(probs["home"] + probs["away"], 1)
+    hat = probs["home"] + probs["away"]
+    if hat > 0:
+        probs["dnb_home"] = round(probs["home"] / hat * 100, 1)
+        probs["dnb_away"] = round(probs["away"] / hat * 100, 1)
+
+    return probs, adjustments, n_home_inj, n_away_inj
 
 # ─────────────────────────────────────────────
 # PROBABILITY CALCULATIONS
@@ -357,6 +478,7 @@ def load_all_data():
             fwo.append(f)
     results = []
     team_cache = {}
+    standings_cache = {}
     for fix in fwo[:120]:
         hid, aid = fix["home_id"], fix["away_id"]
         if hid not in team_cache:
@@ -370,6 +492,10 @@ def load_all_data():
         h2h_ev = fetch_h2h(hid, aid)
         h2h_st = calc_h2h_stats(h2h_ev) if len(h2h_ev) >= 2 else None
         probs = calc_real_probs(hstats, astats, h2h_st)
+        # Adjust probabilities with injuries + standings
+        probs, adjustments, n_h_inj, n_a_inj = adjust_probs(
+            probs, hid, aid, fix["fixture_id"],
+            fix.get("league_id"), fix.get("season"), standings_cache)
         all_vb = []
         all_vb.extend(find_value_bets(fix.get("betano_bets",[]), probs, "Betano"))
         all_vb.extend(find_value_bets(fix.get("superbet_bets",[]), probs, "Superbet"))
@@ -385,10 +511,12 @@ def load_all_data():
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
             "home_team": fix["home_team"], "away_team": fix["away_team"],
             "league": fix["league"], "country": fix["country"],
+            "referee": fix.get("referee", ""),
             "best_market": best["market"], "best_odds": best["odds"],
             "best_ev": best["ev"], "best_prob": best["real_prob"],
             "best_bookmaker": best["bookmaker"], "all_value_bets": sorted_vb,
-            "home_stats": hstats, "away_stats": astats, "h2h_stats": h2h_st, "probs": probs})
+            "home_stats": hstats, "away_stats": astats, "h2h_stats": h2h_st, "probs": probs,
+            "adjustments": adjustments, "home_injuries": n_h_inj, "away_injuries": n_a_inj})
     results.sort(key=lambda x: x["timestamp"])
     return results, today
 
@@ -518,6 +646,21 @@ else:
                 f"O2.5: <strong style='color:#ec4899;'>{p['over25']}%</strong> · "
                 f"O3.5: <strong style='color:#14b8a6;'>{p['over35']}%</strong></div>",
                 unsafe_allow_html=True)
+            # Adjustments (injuries, standings, etc.)
+            adj_list = m.get("adjustments", [])
+            ref = m.get("referee", "")
+            h_inj = m.get("home_injuries", 0)
+            a_inj = m.get("away_injuries", 0)
+            extra_html = ""
+            if ref:
+                extra_html += f"<span style='color:#94a3b8;'>🧑‍⚖️ Arbitru: <strong>{ref}</strong></span><br>"
+            if h_inj > 0 or a_inj > 0:
+                extra_html += f"<span style='color:#fca5a5;'>⚕️ Accidentări: Gazdă {h_inj} | Oaspete {a_inj}</span><br>"
+            for adj in adj_list:
+                extra_html += f"<span style='color:#fcd34d;'>{adj}</span><br>"
+            if extra_html:
+                st.markdown(f"<div style='font-size:0.78rem;line-height:1.8;margin-top:4px;'>{extra_html}</div>",
+                           unsafe_allow_html=True)
         if i < len(matches) - 1:
             st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">',
                        unsafe_allow_html=True)
