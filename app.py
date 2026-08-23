@@ -692,7 +692,7 @@ def find_value_bets(bets_list, probs, bookmaker_name):
 # ─────────────────────────────────────────────
 # MAIN DATA LOADING
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=43200)
+@st.cache_data(ttl=3600)
 def load_all_data():
     today = date.today().strftime("%Y-%m-%d")
     fixtures = fetch_fixtures(today)
