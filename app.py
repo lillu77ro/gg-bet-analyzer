@@ -61,9 +61,10 @@ BETANO_ID = 32
 SUPERBET_ID = 34
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
-MIN_EV = 5.0
+MIN_EV = 10.0
 NUM_MATCHES = 15
 NUM_H2H = 10
+MIN_DATA_MATCHES = 8  # minim 8 meciuri date pentru o analiză validă
 RO_TZ = timezone(timedelta(hours=3))
 
 EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
@@ -74,8 +75,15 @@ EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
 # Also filter team names (catch " W" suffix)
 EXCLUDE_TEAM_SUFFIXES = [" W", " Women", " Ladies", " Femenino", " Femminile", " Frauen"]
 
+# ALL supported betting markets
 SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
-                  "Double Chance","Home/Away","Goals Over/Under First Half"}
+                  "Double Chance","Home/Away","Goals Over/Under First Half",
+                  "Goals Over/Under Second Half","Second Half Winner",
+                  "First Half Winner","Asian Handicap","Total - Home",
+                  "Total - Away","Odd/Even","Clean Sheet - Home",
+                  "Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away",
+                  "Double Chance - First Half","Total Cards","Total Cards - Home",
+                  "Total Cards - Away"}
 
 # ─────────────────────────────────────────────
 # HTTP
@@ -171,6 +179,33 @@ def fetch_team_matches(team_id):
         results.append({"home_id": t.get("home", {}).get("id"), "away_id": t.get("away", {}).get("id"),
                         "home_goals": int(gh), "away_goals": int(ga)})
     return results
+
+def fetch_team_cards(team_id, league_id, season):
+    """Fetch card statistics for a team in a specific league/season."""
+    if not league_id or not season:
+        return None
+    data = api_get("/teams/statistics", {"team": team_id, "league": league_id, "season": season})
+    if not data:
+        return None
+    if isinstance(data, list):
+        return None
+    cards = data.get("cards", {})
+    fixtures = data.get("fixtures", {})
+    total_played = fixtures.get("played", {}).get("total", 0)
+    if total_played == 0:
+        return None
+    total_yellow = 0
+    total_red = 0
+    for period in cards.get("yellow", {}).values():
+        if isinstance(period, dict) and period.get("total"):
+            total_yellow += period["total"]
+    for period in cards.get("red", {}).values():
+        if isinstance(period, dict) and period.get("total"):
+            total_red += period["total"]
+    total_cards = total_yellow + total_red
+    avg_cards = round(total_cards / total_played, 2)
+    return {"total_cards": total_cards, "total_yellow": total_yellow, "total_red": total_red,
+            "matches": total_played, "avg_cards": avg_cards}
 
 def fetch_h2h(home_id, away_id):
     events = api_get("/fixtures/headtohead", {"h2h": f"{home_id}-{away_id}", "last": NUM_H2H})
@@ -308,8 +343,9 @@ def adjust_probs(probs, home_id, away_id, fixture_id, league_id, season, standin
 # PROBABILITY CALCULATIONS
 # ─────────────────────────────────────────────
 def calc_stats(events, team_id, context="all"):
-    total = gg = o15 = o25 = o35 = wins = draws = losses = 0
-    gs = gc = cs = 0
+    total = gg = o15 = o25 = o35 = o45 = wins = draws = losses = 0
+    gs = gc = cs = odd_g = even_g = 0
+    form_results = []  # last 5 results: W/D/L
     for ev in events:
         is_home = (ev["home_id"] == team_id)
         if context == "home" and not is_home:
@@ -322,26 +358,35 @@ def calc_stats(events, team_id, context="all"):
         if is_home:
             gs += gh; gc += ga
             if ga == 0: cs += 1
-            if gh > ga: wins += 1
-            elif gh == ga: draws += 1
-            else: losses += 1
+            if gh > ga: wins += 1; form_results.append("W")
+            elif gh == ga: draws += 1; form_results.append("D")
+            else: losses += 1; form_results.append("L")
         else:
             gs += ga; gc += gh
             if gh == 0: cs += 1
-            if ga > gh: wins += 1
-            elif ga == gh: draws += 1
-            else: losses += 1
+            if ga > gh: wins += 1; form_results.append("W")
+            elif ga == gh: draws += 1; form_results.append("D")
+            else: losses += 1; form_results.append("L")
         if gh > 0 and ga > 0: gg += 1
         if tg >= 2: o15 += 1
         if tg >= 3: o25 += 1
         if tg >= 4: o35 += 1
+        if tg >= 5: o45 += 1
+        if tg % 2 == 1: odd_g += 1
+        else: even_g += 1
     if total == 0:
         return None
     pct = lambda n: round(n / total * 100, 1)
+    # Form: last 5 matches win rate
+    last5 = form_results[:5]
+    form_w = last5.count("W") if last5 else 0
+    form_pts = (last5.count("W") * 3 + last5.count("D")) / max(len(last5), 1)
     return {"total": total, "gg_pct": pct(gg), "o15_pct": pct(o15), "o25_pct": pct(o25),
-            "o35_pct": pct(o35), "win_pct": pct(wins), "draw_pct": pct(draws),
+            "o35_pct": pct(o35), "o45_pct": pct(o45), "win_pct": pct(wins), "draw_pct": pct(draws),
             "loss_pct": pct(losses), "cs_pct": pct(cs),
-            "avg_scored": round(gs/total, 2), "avg_conceded": round(gc/total, 2)}
+            "avg_scored": round(gs/total, 2), "avg_conceded": round(gc/total, 2),
+            "odd_pct": pct(odd_g), "even_pct": pct(even_g),
+            "form_pts": round(form_pts, 2), "form_w5": form_w, "form_str": "".join(last5)}
 
 def calc_h2h_stats(events):
     total = gg = o15 = o25 = o35 = hw = dr = aw = 0
@@ -375,6 +420,9 @@ def calc_real_probs(hs, aws, h2h):
         hh = h2h[hk] if h2h else None
         p[key] = blend(hs[hk], aws[hk], hh)
         p[key.replace("over","under")] = round(100 - p[key], 1)
+    # Over/Under 4.5
+    p["over45"] = blend(hs.get("o45_pct",0), aws.get("o45_pct",0), None)
+    p["under45"] = round(100 - p["over45"], 1)
     hhw = h2h["home_win_pct"] if h2h else None
     hdw = h2h["draw_pct"] if h2h else None
     haw = h2h["away_win_pct"] if h2h else None
@@ -394,11 +442,105 @@ def calc_real_probs(hs, aws, h2h):
         p["dnb_home"]=round(p["home"]/hat*100,1); p["dnb_away"]=round(p["away"]/hat*100,1)
     else:
         p["dnb_home"]=50.0; p["dnb_away"]=50.0
+    # First Half
     p["fh_over05"]=round(min(p["over15"]*0.85,99),1)
     p["fh_over15"]=round(min(p["over25"]*0.65,95),1)
     p["fh_under05"]=round(100-p["fh_over05"],1)
     p["fh_under15"]=round(100-p["fh_over15"],1)
+    p["fh_home"]=round(min(p["home"]*1.05,85),1)
+    p["fh_draw"]=round(min(40,p["draw"]*1.3),1)
+    p["fh_away"]=round(100-p["fh_home"]-p["fh_draw"],1)
+    # Second Half
+    p["sh_over05"]=round(min(p["over15"]*0.90,99),1)
+    p["sh_over15"]=round(min(p["over25"]*0.70,95),1)
+    p["sh_under05"]=round(100-p["sh_over05"],1)
+    p["sh_under15"]=round(100-p["sh_over15"],1)
+    p["sh_home"]=round(p["home"]*0.95,1)
+    p["sh_draw"]=round(min(40,p["draw"]*1.2),1)
+    p["sh_away"]=round(100-p["sh_home"]-p["sh_draw"],1)
+    # Odd/Even goals
+    p["odd"]=blend(hs.get("odd_pct",50), aws.get("odd_pct",50), None)
+    p["even"]=round(100-p["odd"],1)
+    # Team total goals (home team over/under)
+    avg_h = hs["avg_scored"]
+    avg_a = aws["avg_scored"]
+    p["home_o05"]=round(min(85 + avg_h*5, 99),1); p["home_u05"]=round(100-p["home_o05"],1)
+    p["home_o15"]=round(min(40 + avg_h*15, 95),1); p["home_u15"]=round(100-p["home_o15"],1)
+    p["away_o05"]=round(min(80 + avg_a*5, 99),1); p["away_u05"]=round(100-p["away_o05"],1)
+    p["away_o15"]=round(min(35 + avg_a*15, 95),1); p["away_u15"]=round(100-p["away_o15"],1)
+    # Asian Handicap approximations
+    p["ah_home_-05"]=p["home"]; p["ah_away_+05"]=round(100-p["home"],1)
+    p["ah_home_-10"]=round(max(p["home"]-15,5),1); p["ah_away_+10"]=round(100-p["ah_home_-10"],1)
+    p["ah_home_-15"]=round(max(p["home"]-25,3),1); p["ah_away_+15"]=round(100-p["ah_home_-15"],1)
+    p["ah_home_+05"]=round(p["home"]+p["draw"],1); p["ah_away_-05"]=round(100-p["ah_home_+05"],1)
+    # Clean Sheet
+    p["cs_home_yes"]=round(blend(hs["cs_pct"], 100-aws["avg_scored"]*25, None),1)
+    p["cs_home_no"]=round(100-p["cs_home_yes"],1)
+    p["cs_away_yes"]=round(blend(aws["cs_pct"], 100-hs["avg_scored"]*25, None),1)
+    p["cs_away_no"]=round(100-p["cs_away_yes"],1)
+    # Win to Nil
+    p["wtn_home"]=round(p["home"]*p["cs_home_yes"]/100,1)
+    p["wtn_home_no"]=round(100-p["wtn_home"],1)
+    p["wtn_away"]=round(p["away"]*p["cs_away_yes"]/100,1)
+    p["wtn_away_no"]=round(100-p["wtn_away"],1)
+    # Double Chance First Half
+    p["fh_1x"]=round(p["fh_home"]+p["fh_draw"],1)
+    p["fh_x2"]=round(p["fh_draw"]+p["fh_away"],1)
+    p["fh_12"]=round(p["fh_home"]+p["fh_away"],1)
     return p
+
+def add_card_probs(p, h_cards, a_cards):
+    """Add card probabilities based on team card averages."""
+    if not h_cards or not a_cards:
+        return p
+    # Combined average cards per match
+    avg_total = h_cards["avg_cards"] + a_cards["avg_cards"]
+    # Use Poisson-like estimation for over/under
+    import math
+    def poisson_over(lam, k):
+        # P(X >= k) = 1 - P(X < k)
+        p_under = sum((lam**i * math.exp(-lam)) / math.factorial(i) for i in range(k))
+        return round(min(max(p_under * 100, 1), 99) if k == 0 else min(max((1 - p_under) * 100, 1), 99), 1)
+    p["cards_o25"] = poisson_over(avg_total, 3)
+    p["cards_u25"] = round(100 - p["cards_o25"], 1)
+    p["cards_o35"] = poisson_over(avg_total, 4)
+    p["cards_u35"] = round(100 - p["cards_o35"], 1)
+    p["cards_o45"] = poisson_over(avg_total, 5)
+    p["cards_u45"] = round(100 - p["cards_o45"], 1)
+    p["cards_o55"] = poisson_over(avg_total, 6)
+    p["cards_u55"] = round(100 - p["cards_o55"], 1)
+    # Home/Away cards
+    h_avg = h_cards["avg_cards"]
+    a_avg = a_cards["avg_cards"]
+    p["hcards_o05"] = poisson_over(h_avg, 1)
+    p["hcards_u05"] = round(100 - p["hcards_o05"], 1)
+    p["hcards_o15"] = poisson_over(h_avg, 2)
+    p["hcards_u15"] = round(100 - p["hcards_o15"], 1)
+    p["acards_o05"] = poisson_over(a_avg, 1)
+    p["acards_u05"] = round(100 - p["acards_o05"], 1)
+    p["acards_o15"] = poisson_over(a_avg, 2)
+    p["acards_u15"] = round(100 - p["acards_o15"], 1)
+    return p
+
+def calc_confidence(ev, home_stats, away_stats, h2h_stats):
+    """Calculate confidence score 1-100 combining EV, form, data quality, H2H."""
+    score = 0
+    # EV component (0-40 points)
+    score += min(ev * 2, 40)
+    # Data quality (0-20 points)
+    data_pts = min(home_stats["total"], 15) + min(away_stats["total"], 15)
+    score += round(data_pts / 30 * 20)
+    # Form component (0-20 points)
+    h_form = home_stats.get("form_pts", 1.0)
+    a_form = away_stats.get("form_pts", 1.0)
+    avg_form = (h_form + a_form) / 2
+    score += round(min(avg_form / 3 * 20, 20))
+    # H2H bonus (0-20 points)
+    if h2h_stats and h2h_stats["total"] >= 3:
+        score += 15
+    elif h2h_stats:
+        score += 8
+    return min(score, 100)
 
 # ─────────────────────────────────────────────
 # EV CALCULATION
@@ -411,7 +553,8 @@ def map_odds_to_prob(bn, v, p):
         return {"Yes":p.get("gg"),"No":p.get("ng")}.get(v)
     elif bn == "Goals Over/Under":
         m = {"Over 1.5":"over15","Under 1.5":"under15","Over 2.5":"over25",
-             "Under 2.5":"under25","Over 3.5":"over35","Under 3.5":"under35"}
+             "Under 2.5":"under25","Over 3.5":"over35","Under 3.5":"under35",
+             "Over 4.5":"over45","Under 4.5":"under45"}
         return p.get(m.get(v))
     elif bn == "Double Chance":
         m = {"Home/Draw":"home_draw","Draw/Away":"draw_away","Home/Away":"home_away"}
@@ -423,6 +566,57 @@ def map_odds_to_prob(bn, v, p):
         elif "Under 0.5" in v: return p.get("fh_under05")
         elif "Over 1.5" in v: return p.get("fh_over15")
         elif "Under 1.5" in v: return p.get("fh_under15")
+    elif bn == "Goals Over/Under Second Half":
+        if "Over 0.5" in v: return p.get("sh_over05")
+        elif "Under 0.5" in v: return p.get("sh_under05")
+        elif "Over 1.5" in v: return p.get("sh_over15")
+        elif "Under 1.5" in v: return p.get("sh_under15")
+    elif bn == "Second Half Winner":
+        return {"Home":p.get("sh_home"),"Draw":p.get("sh_draw"),"Away":p.get("sh_away")}.get(v)
+    elif bn == "First Half Winner":
+        return {"Home":p.get("fh_home"),"Draw":p.get("fh_draw"),"Away":p.get("fh_away")}.get(v)
+    elif bn == "Odd/Even":
+        return {"Odd":p.get("odd"),"Even":p.get("even")}.get(v)
+    elif bn == "Total - Home":
+        if "Over 0.5" in v: return p.get("home_o05")
+        elif "Under 0.5" in v: return p.get("home_u05")
+        elif "Over 1.5" in v: return p.get("home_o15")
+        elif "Under 1.5" in v: return p.get("home_u15")
+    elif bn == "Total - Away":
+        if "Over 0.5" in v: return p.get("away_o05")
+        elif "Under 0.5" in v: return p.get("away_u05")
+        elif "Over 1.5" in v: return p.get("away_o15")
+        elif "Under 1.5" in v: return p.get("away_u15")
+    elif bn == "Asian Handicap":
+        m = {"Home -0.5":"ah_home_-05","Away +0.5":"ah_away_+05",
+             "Home -1":"ah_home_-10","Away +1":"ah_away_+10",
+             "Home -1.5":"ah_home_-15","Away +1.5":"ah_away_+15",
+             "Home +0.5":"ah_home_+05","Away -0.5":"ah_away_-05"}
+        return p.get(m.get(v))
+    elif bn == "Clean Sheet - Home":
+        return {"Yes":p.get("cs_home_yes"),"No":p.get("cs_home_no")}.get(v)
+    elif bn == "Clean Sheet - Away":
+        return {"Yes":p.get("cs_away_yes"),"No":p.get("cs_away_no")}.get(v)
+    elif bn == "Win to Nil - Home":
+        return {"Yes":p.get("wtn_home"),"No":p.get("wtn_home_no")}.get(v)
+    elif bn == "Win to Nil - Away":
+        return {"Yes":p.get("wtn_away"),"No":p.get("wtn_away_no")}.get(v)
+    elif bn == "Double Chance - First Half":
+        return {"Home/Draw":p.get("fh_1x"),"Draw/Away":p.get("fh_x2"),"Home/Away":p.get("fh_12")}.get(v)
+    elif bn == "Total Cards":
+        m = {"Over 2.5":"cards_o25","Under 2.5":"cards_u25",
+             "Over 3.5":"cards_o35","Under 3.5":"cards_u35",
+             "Over 4.5":"cards_o45","Under 4.5":"cards_u45",
+             "Over 5.5":"cards_o55","Under 5.5":"cards_u55"}
+        return p.get(m.get(v))
+    elif bn == "Total Cards - Home":
+        m = {"Over 0.5":"hcards_o05","Under 0.5":"hcards_u05",
+             "Over 1.5":"hcards_o15","Under 1.5":"hcards_u15"}
+        return p.get(m.get(v))
+    elif bn == "Total Cards - Away":
+        m = {"Over 0.5":"acards_o05","Under 0.5":"acards_u05",
+             "Over 1.5":"acards_o15","Under 1.5":"acards_u15"}
+        return p.get(m.get(v))
     return None
 
 def translate_bet(bn, v):
@@ -439,6 +633,36 @@ def translate_bet(bn, v):
         return {"Home":"Gazdă DNB","Away":"Oaspete DNB"}.get(v, v)
     elif bn == "Goals Over/Under First Half":
         return "R1 " + v.replace("Over","Peste").replace("Under","Sub")
+    elif bn == "Goals Over/Under Second Half":
+        return "R2 " + v.replace("Over","Peste").replace("Under","Sub")
+    elif bn == "Second Half Winner":
+        return {"Home":"R2 1 Gazdă","Draw":"R2 X Egal","Away":"R2 2 Oaspete"}.get(v, v)
+    elif bn == "First Half Winner":
+        return {"Home":"R1 1 Gazdă","Draw":"R1 X Egal","Away":"R1 2 Oaspete"}.get(v, v)
+    elif bn == "Odd/Even":
+        return {"Odd":"Impar","Even":"Par"}.get(v, v)
+    elif bn == "Total - Home":
+        return "Gazdă " + v.replace("Over","Peste").replace("Under","Sub")
+    elif bn == "Total - Away":
+        return "Oaspete " + v.replace("Over","Peste").replace("Under","Sub")
+    elif bn == "Asian Handicap":
+        return "AH " + v.replace("Home","Gazdă").replace("Away","Oaspete")
+    elif bn == "Clean Sheet - Home":
+        return {"Yes":"CS Gazdă Da","No":"CS Gazdă Nu"}.get(v, v)
+    elif bn == "Clean Sheet - Away":
+        return {"Yes":"CS Oaspete Da","No":"CS Oaspete Nu"}.get(v, v)
+    elif bn == "Win to Nil - Home":
+        return {"Yes":"Gazdă la 0 Da","No":"Gazdă la 0 Nu"}.get(v, v)
+    elif bn == "Win to Nil - Away":
+        return {"Yes":"Oaspete la 0 Da","No":"Oaspete la 0 Nu"}.get(v, v)
+    elif bn == "Double Chance - First Half":
+        return {"Home/Draw":"R1 1X","Draw/Away":"R1 X2","Home/Away":"R1 12"}.get(v, v)
+    elif bn == "Total Cards":
+        return "🟨 " + v.replace("Over","Peste").replace("Under","Sub") + " cart."
+    elif bn == "Total Cards - Home":
+        return "🟨 Gazdă " + v.replace("Over","Peste").replace("Under","Sub") + " cart."
+    elif bn == "Total Cards - Away":
+        return "🟨 Oaspete " + v.replace("Over","Peste").replace("Under","Sub") + " cart."
     return v
 
 def find_value_bets(bets_list, probs, bookmaker_name):
@@ -498,6 +722,9 @@ def load_all_data():
         astats = calc_stats(team_cache[aid], aid, "away")
         if not hstats or not astats:
             continue
+        # Minimum data filter
+        if hstats["total"] < MIN_DATA_MATCHES or astats["total"] < MIN_DATA_MATCHES:
+            continue
         h2h_ev = fetch_h2h(hid, aid)
         h2h_st = calc_h2h_stats(h2h_ev) if len(h2h_ev) >= 2 else None
         probs = calc_real_probs(hstats, astats, h2h_st)
@@ -505,6 +732,10 @@ def load_all_data():
         probs, adjustments, n_h_inj, n_a_inj = adjust_probs(
             probs, hid, aid, fix["fixture_id"],
             fix.get("league_id"), fix.get("season"), standings_cache)
+        # Card probabilities
+        h_cards = fetch_team_cards(hid, fix.get("league_id"), fix.get("season"))
+        a_cards = fetch_team_cards(aid, fix.get("league_id"), fix.get("season"))
+        probs = add_card_probs(probs, h_cards, a_cards)
         all_vb = []
         all_vb.extend(find_value_bets(fix.get("betano_bets",[]), probs, "Betano"))
         all_vb.extend(find_value_bets(fix.get("superbet_bets",[]), probs, "Superbet"))
@@ -517,6 +748,8 @@ def load_all_data():
                 best_by_mkt[k] = vb
         sorted_vb = sorted(best_by_mkt.values(), key=lambda x: x["ev"], reverse=True)
         best = sorted_vb[0]
+        # Confidence score
+        conf = calc_confidence(best["ev"], hstats, astats, h2h_st)
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
             "home_team": fix["home_team"], "away_team": fix["away_team"],
             "league": fix["league"], "country": fix["country"],
@@ -525,7 +758,9 @@ def load_all_data():
             "best_ev": best["ev"], "best_prob": best["real_prob"],
             "best_bookmaker": best["bookmaker"], "all_value_bets": sorted_vb,
             "home_stats": hstats, "away_stats": astats, "h2h_stats": h2h_st, "probs": probs,
-            "adjustments": adjustments, "home_injuries": n_h_inj, "away_injuries": n_a_inj})
+            "adjustments": adjustments, "home_injuries": n_h_inj, "away_injuries": n_a_inj,
+            "confidence": conf,
+            "home_form": hstats.get("form_str",""), "away_form": astats.get("form_str","")})
     results.sort(key=lambda x: x["timestamp"])
     return results, today
 
@@ -593,8 +828,8 @@ if not matches:
 else:
     st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>"
                 f"🎯 Value Bets — {total_vb} meciuri cu valoare</div>", unsafe_allow_html=True)
-    h_cols = st.columns([0.5, 2.2, 1.3, 0.7, 1.5, 0.7, 0.6, 0.8])
-    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pronostic","💰 Cotă","📈 EV","🏦"]):
+    h_cols = st.columns([0.5, 2.0, 1.2, 0.6, 1.4, 0.6, 0.5, 0.5, 0.7])
+    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pronostic","💰 Cotă","📈 EV","🎯","🏦"]):
         col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;"
                      f"text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
     st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">',
@@ -603,7 +838,7 @@ else:
         ev = m["best_ev"]
         color = ev_color(ev)
         bg = ev_bg(ev)
-        cols = st.columns([0.5, 2.2, 1.3, 0.7, 1.5, 0.7, 0.6, 0.8])
+        cols = st.columns([0.5, 2.0, 1.2, 0.6, 1.4, 0.6, 0.5, 0.5, 0.7])
         cols[0].markdown(f"<div style='border-left:4px solid {color};padding-left:10px;"
                          f"font-weight:700;color:#cbd5e1;'>{m['time']}</div>", unsafe_allow_html=True)
         cols[1].markdown(f"<div style='font-weight:700;color:#f1f5f9;font-size:0.95rem;'>"
@@ -620,8 +855,13 @@ else:
                          f"{m['best_odds']}</div>", unsafe_allow_html=True)
         cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{color};'>+{ev}%</div>",
                          unsafe_allow_html=True)
+        # Confidence score
+        conf = m.get("confidence", 0)
+        conf_color = "#34d399" if conf >= 75 else "#f59e0b" if conf >= 50 else "#ef4444"
+        cols[7].markdown(f"<div style='font-size:0.9rem;font-weight:800;color:{conf_color};'>"
+                         f"{conf}</div>", unsafe_allow_html=True)
         bk_c = "#f59e0b" if m["best_bookmaker"] == "Betano" else "#ec4899"
-        cols[7].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
+        cols[8].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
                          f"{m['best_bookmaker']}</div>", unsafe_allow_html=True)
         with st.expander(f"📊 Toate piețele: {m['home_team']} vs {m['away_team']}"):
             vh = st.columns([2, 1, 1, 1, 1])
