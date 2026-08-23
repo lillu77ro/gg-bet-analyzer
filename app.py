@@ -684,7 +684,7 @@ def find_value_bets(bets_list, probs, bookmaker_name):
                 continue
             ip = round(1/odds*100, 1)
             ev = round(rp - ip, 1)
-            if ev >= MIN_EV:
+            if ev >= MIN_EV and rp >= 50:
                 vbs.append({"market": translate_bet(bn, vl), "odds": odds,
                     "real_prob": rp, "implied_prob": ip, "ev": ev, "bookmaker": bookmaker_name})
     return vbs
