@@ -747,7 +747,8 @@ def load_all_data():
             if k not in best_by_mkt or vb["odds"] > best_by_mkt[k]["odds"]:
                 best_by_mkt[k] = vb
         sorted_vb = sorted(best_by_mkt.values(), key=lambda x: x["ev"], reverse=True)
-        best = sorted_vb[0]
+        # Best pick = highest combined score (EV × 0.4 + Prob × 0.6)
+        best = max(sorted_vb, key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6)
         # Confidence score
         conf = calc_confidence(best["ev"], hstats, astats, h2h_st)
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
@@ -828,8 +829,8 @@ if not matches:
 else:
     st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>"
                 f"🎯 Value Bets — {total_vb} meciuri cu valoare</div>", unsafe_allow_html=True)
-    h_cols = st.columns([0.5, 2.0, 1.2, 0.6, 1.4, 0.6, 0.5, 0.5, 0.7])
-    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pronostic","💰 Cotă","📈 EV","🎯","🏦"]):
+    h_cols = st.columns([0.5, 1.8, 1.0, 0.5, 1.3, 0.5, 0.5, 0.5, 0.5, 0.6])
+    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pronostic","💰 Cotă","✅ Prob","📈 EV","🎯","🏦"]):
         col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;"
                      f"text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
     st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">',
@@ -838,7 +839,7 @@ else:
         ev = m["best_ev"]
         color = ev_color(ev)
         bg = ev_bg(ev)
-        cols = st.columns([0.5, 2.0, 1.2, 0.6, 1.4, 0.6, 0.5, 0.5, 0.7])
+        cols = st.columns([0.5, 1.8, 1.0, 0.5, 1.3, 0.5, 0.5, 0.5, 0.5, 0.6])
         cols[0].markdown(f"<div style='border-left:4px solid {color};padding-left:10px;"
                          f"font-weight:700;color:#cbd5e1;'>{m['time']}</div>", unsafe_allow_html=True)
         cols[1].markdown(f"<div style='font-weight:700;color:#f1f5f9;font-size:0.95rem;'>"
@@ -853,63 +854,21 @@ else:
                          f"border-radius:10px;'>{m['best_market']}</span>", unsafe_allow_html=True)
         cols[5].markdown(f"<div style='font-size:1.05rem;font-weight:700;color:#f1f5f9;'>"
                          f"{m['best_odds']}</div>", unsafe_allow_html=True)
-        cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{color};'>+{ev}%</div>",
+        # Prob. Reală
+        prob = m["best_prob"]
+        prob_color = "#34d399" if prob >= 65 else "#f59e0b" if prob >= 50 else "#ef4444"
+        cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{prob_color};'>{prob}%</div>",
+                         unsafe_allow_html=True)
+        cols[7].markdown(f"<div style='font-size:1rem;font-weight:800;color:{color};'>+{ev}%</div>",
                          unsafe_allow_html=True)
         # Confidence score
         conf = m.get("confidence", 0)
         conf_color = "#34d399" if conf >= 75 else "#f59e0b" if conf >= 50 else "#ef4444"
-        cols[7].markdown(f"<div style='font-size:0.9rem;font-weight:800;color:{conf_color};'>"
+        cols[8].markdown(f"<div style='font-size:0.9rem;font-weight:800;color:{conf_color};'>"
                          f"{conf}</div>", unsafe_allow_html=True)
         bk_c = "#f59e0b" if m["best_bookmaker"] == "Betano" else "#ec4899"
-        cols[8].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
+        cols[9].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
                          f"{m['best_bookmaker']}</div>", unsafe_allow_html=True)
-        with st.expander(f"📊 Toate piețele: {m['home_team']} vs {m['away_team']}"):
-            vh = st.columns([2, 1, 1, 1, 1])
-            for vc, vn in zip(vh, ["Piață","Cotă","Prob. Reală","Prob. Implicită","EV"]):
-                vc.markdown(f"<strong style='font-size:0.75rem;color:#64748b;'>{vn}</strong>",
-                           unsafe_allow_html=True)
-            for vb in m["all_value_bets"]:
-                vc = st.columns([2, 1, 1, 1, 1])
-                ec = ev_color(vb["ev"])
-                vc[0].markdown(f"<span style='color:#e2e8f0;font-weight:600;'>{vb['market']}</span>"
-                              f" <span style='font-size:0.7rem;color:#475569;'>({vb['bookmaker']})</span>",
-                              unsafe_allow_html=True)
-                vc[1].markdown(f"<span style='color:#f1f5f9;font-weight:700;'>{vb['odds']}</span>",
-                              unsafe_allow_html=True)
-                vc[2].markdown(f"<span style='color:#34d399;'>{vb['real_prob']}%</span>",
-                              unsafe_allow_html=True)
-                vc[3].markdown(f"<span style='color:#94a3b8;'>{vb['implied_prob']}%</span>",
-                              unsafe_allow_html=True)
-                vc[4].markdown(f"<span style='font-weight:700;color:{ec};'>+{vb['ev']}%</span>",
-                              unsafe_allow_html=True)
-            st.markdown("<hr style='border-top:1px solid rgba(255,255,255,0.05);margin:0.5rem 0;'>",
-                       unsafe_allow_html=True)
-            p = m["probs"]
-            st.markdown(
-                f"<div style='font-size:0.78rem;color:#64748b;line-height:2;'>"
-                f"<strong style='color:#94a3b8;'>Probabilități:</strong> "
-                f"1X2: <strong style='color:#f59e0b;'>{p['home']}%</strong> | "
-                f"<strong style='color:#94a3b8;'>{p['draw']}%</strong> | "
-                f"<strong style='color:#818cf8;'>{p['away']}%</strong> · "
-                f"GG: <strong style='color:#34d399;'>{p['gg']}%</strong> · "
-                f"O2.5: <strong style='color:#ec4899;'>{p['over25']}%</strong> · "
-                f"O3.5: <strong style='color:#14b8a6;'>{p['over35']}%</strong></div>",
-                unsafe_allow_html=True)
-            # Adjustments (injuries, standings, etc.)
-            adj_list = m.get("adjustments", [])
-            ref = m.get("referee", "")
-            h_inj = m.get("home_injuries", 0)
-            a_inj = m.get("away_injuries", 0)
-            extra_html = ""
-            if ref:
-                extra_html += f"<span style='color:#94a3b8;'>🧑‍⚖️ Arbitru: <strong>{ref}</strong></span><br>"
-            if h_inj > 0 or a_inj > 0:
-                extra_html += f"<span style='color:#fca5a5;'>⚕️ Accidentări: Gazdă {h_inj} | Oaspete {a_inj}</span><br>"
-            for adj in adj_list:
-                extra_html += f"<span style='color:#fcd34d;'>{adj}</span><br>"
-            if extra_html:
-                st.markdown(f"<div style='font-size:0.78rem;line-height:1.8;margin-top:4px;'>{extra_html}</div>",
-                           unsafe_allow_html=True)
         if i < len(matches) - 1:
             st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">',
                        unsafe_allow_html=True)
