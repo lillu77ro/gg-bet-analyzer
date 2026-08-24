@@ -61,7 +61,7 @@ BETANO_ID = 32
 SUPERBET_ID = 34
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
-MIN_EV = 10.0
+MIN_EV = 8.0
 NUM_MATCHES = 15
 NUM_H2H = 10
 MIN_DATA_MATCHES = 8  # minim 8 meciuri date pentru o analiză validă
@@ -75,14 +75,14 @@ EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
 # Also filter team names (catch " W" suffix)
 EXCLUDE_TEAM_SUFFIXES = [" W", " Women", " Ladies", " Femenino", " Femminile", " Frauen"]
 
-# ALL supported betting markets
+# ALL supported betting markets (fără DC Repriza 1 — nu există pe Betano)
 SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
                   "Double Chance","Home/Away","Goals Over/Under First Half",
                   "Goals Over/Under Second Half","Second Half Winner",
                   "First Half Winner","Asian Handicap","Total - Home",
                   "Total - Away","Odd/Even","Clean Sheet - Home",
                   "Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away",
-                  "Double Chance - First Half","Total Cards","Total Cards - Home",
+                  "Total Cards","Total Cards - Home",
                   "Total Cards - Away"}
 
 # ─────────────────────────────────────────────
@@ -468,11 +468,20 @@ def calc_real_probs(hs, aws, h2h):
     p["home_o15"]=round(min(40 + avg_h*15, 95),1); p["home_u15"]=round(100-p["home_o15"],1)
     p["away_o05"]=round(min(80 + avg_a*5, 99),1); p["away_u05"]=round(100-p["away_o05"],1)
     p["away_o15"]=round(min(35 + avg_a*15, 95),1); p["away_u15"]=round(100-p["away_o15"],1)
-    # Asian Handicap approximations
+    # Asian Handicap approximations (all lines)
     p["ah_home_-05"]=p["home"]; p["ah_away_+05"]=round(100-p["home"],1)
     p["ah_home_-10"]=round(max(p["home"]-15,5),1); p["ah_away_+10"]=round(100-p["ah_home_-10"],1)
     p["ah_home_-15"]=round(max(p["home"]-25,3),1); p["ah_away_+15"]=round(100-p["ah_home_-15"],1)
+    p["ah_home_-20"]=round(max(p["home"]-35,2),1); p["ah_away_+20"]=round(100-p["ah_home_-20"],1)
+    p["ah_home_-25"]=round(max(p["home"]-45,1),1); p["ah_away_+25"]=round(100-p["ah_home_-25"],1)
     p["ah_home_+05"]=round(p["home"]+p["draw"],1); p["ah_away_-05"]=round(100-p["ah_home_+05"],1)
+    p["ah_home_+10"]=round(min(p["home"]+p["draw"]+10,98),1); p["ah_away_-10"]=round(100-p["ah_home_+10"],1)
+    p["ah_home_+15"]=round(min(p["home"]+p["draw"]+20,99),1); p["ah_away_-15"]=round(100-p["ah_home_+15"],1)
+    # Quarter lines (average of adjacent half lines)
+    p["ah_home_-025"]=round((p["home"]+p["ah_home_+05"])/2,1); p["ah_away_+025"]=round(100-p["ah_home_-025"],1)
+    p["ah_home_-075"]=round((p["ah_home_-05"]+p["ah_home_-10"])/2,1); p["ah_away_+075"]=round(100-p["ah_home_-075"],1)
+    p["ah_home_-125"]=round((p["ah_home_-10"]+p["ah_home_-15"])/2,1); p["ah_away_+125"]=round(100-p["ah_home_-125"],1)
+    p["ah_home_+025"]=round((p["ah_home_+05"]+p["home"]+p["draw"])/2,1); p["ah_away_-025"]=round(100-p["ah_home_+025"],1)
     # Clean Sheet
     p["cs_home_yes"]=round(blend(hs["cs_pct"], 100-aws["avg_scored"]*25, None),1)
     p["cs_home_no"]=round(100-p["cs_home_yes"],1)
@@ -591,7 +600,15 @@ def map_odds_to_prob(bn, v, p):
         m = {"Home -0.5":"ah_home_-05","Away +0.5":"ah_away_+05",
              "Home -1":"ah_home_-10","Away +1":"ah_away_+10",
              "Home -1.5":"ah_home_-15","Away +1.5":"ah_away_+15",
-             "Home +0.5":"ah_home_+05","Away -0.5":"ah_away_-05"}
+             "Home -2":"ah_home_-20","Away +2":"ah_away_+20",
+             "Home -2.5":"ah_home_-25","Away +2.5":"ah_away_+25",
+             "Home +0.5":"ah_home_+05","Away -0.5":"ah_away_-05",
+             "Home +1":"ah_home_+10","Away -1":"ah_away_-10",
+             "Home +1.5":"ah_home_+15","Away -1.5":"ah_away_-15",
+             "Home -0.25":"ah_home_-025","Away +0.25":"ah_away_+025",
+             "Home -0.75":"ah_home_-075","Away +0.75":"ah_away_+075",
+             "Home -1.25":"ah_home_-125","Away +1.25":"ah_away_+125",
+             "Home +0.25":"ah_home_+025","Away -0.25":"ah_away_-025"}
         return p.get(m.get(v))
     elif bn == "Clean Sheet - Home":
         return {"Yes":p.get("cs_home_yes"),"No":p.get("cs_home_no")}.get(v)
