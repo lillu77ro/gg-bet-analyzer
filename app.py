@@ -75,15 +75,17 @@ EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
 # Also filter team names (catch " W" suffix)
 EXCLUDE_TEAM_SUFFIXES = [" W", " Women", " Ladies", " Femenino", " Femminile", " Frauen"]
 
-# ALL supported betting markets (fără DC Repriza 1 — nu există pe Betano)
+# ALL supported betting markets (fără Asian Handicap — cotele din API nu corespund cu realitatea!)
 SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
                   "Double Chance","Home/Away","Goals Over/Under First Half",
                   "Goals Over/Under Second Half","Second Half Winner",
-                  "First Half Winner","Asian Handicap","Total - Home",
+                  "First Half Winner","Total - Home",
                   "Total - Away","Odd/Even","Clean Sheet - Home",
                   "Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away",
-                  "Total Cards","Total Cards - Home",
-                  "Total Cards - Away"}
+                  "Total Cards","Total Cards - Home","Total Cards - Away",
+                  "Results/Both Teams Score","To Score in Both Halves",
+                  "Highest Scoring Half","Both Teams Score - First Half",
+                  "Both Teams To Score - Second Half"}
 
 # ─────────────────────────────────────────────
 # HTTP
@@ -492,10 +494,30 @@ def calc_real_probs(hs, aws, h2h):
     p["wtn_home_no"]=round(100-p["wtn_home"],1)
     p["wtn_away"]=round(p["away"]*p["cs_away_yes"]/100,1)
     p["wtn_away_no"]=round(100-p["wtn_away"],1)
-    # Double Chance First Half
-    p["fh_1x"]=round(p["fh_home"]+p["fh_draw"],1)
-    p["fh_x2"]=round(p["fh_draw"]+p["fh_away"],1)
-    p["fh_12"]=round(p["fh_home"]+p["fh_away"],1)
+    # Results/Both Teams Score combo
+    p["home_gg_yes"]=round(p["home"]*p["gg"]/100,1)
+    p["draw_gg_yes"]=round(p["draw"]*p["gg"]/100,1)
+    p["away_gg_yes"]=round(p["away"]*p["gg"]/100,1)
+    p["home_gg_no"]=round(p["home"]*p["ng"]/100,1)
+    p["draw_gg_no"]=round(p["draw"]*p["ng"]/100,1)
+    p["away_gg_no"]=round(p["away"]*p["ng"]/100,1)
+    # To Score in Both Halves
+    fh_goal_pct = min(p["fh_over05"], 95)
+    sh_goal_pct = min(p["sh_over05"], 95)
+    p["score_both_halves_yes"] = round(fh_goal_pct * sh_goal_pct / 100, 1)
+    p["score_both_halves_no"] = round(100 - p["score_both_halves_yes"], 1)
+    # Highest Scoring Half
+    p["highest_1st"] = round(max(25, 100 - sh_goal_pct * 0.6), 1)
+    p["highest_2nd"] = round(max(35, sh_goal_pct * 0.6), 1)
+    p["highest_draw"] = round(100 - p["highest_1st"] - p["highest_2nd"], 1)
+    # Both Teams Score - First Half (GG in R1)
+    fh_gg = round(p["gg"] * 0.45, 1)
+    p["fh_gg_yes"] = min(fh_gg, 40)
+    p["fh_gg_no"] = round(100 - p["fh_gg_yes"], 1)
+    # Both Teams Score - Second Half (GG in R2)
+    sh_gg = round(p["gg"] * 0.55, 1)
+    p["sh_gg_yes"] = min(sh_gg, 45)
+    p["sh_gg_no"] = round(100 - p["sh_gg_yes"], 1)
     return p
 
 def add_card_probs(p, h_cards, a_cards):
@@ -634,6 +656,18 @@ def map_odds_to_prob(bn, v, p):
         m = {"Over 0.5":"acards_o05","Under 0.5":"acards_u05",
              "Over 1.5":"acards_o15","Under 1.5":"acards_u15"}
         return p.get(m.get(v))
+    elif bn == "Results/Both Teams Score":
+        m = {"Home/Yes":"home_gg_yes","Draw/Yes":"draw_gg_yes","Away/Yes":"away_gg_yes",
+             "Home/No":"home_gg_no","Draw/No":"draw_gg_no","Away/No":"away_gg_no"}
+        return p.get(m.get(v))
+    elif bn == "To Score in Both Halves":
+        return {"Yes":p.get("score_both_halves_yes"),"No":p.get("score_both_halves_no")}.get(v)
+    elif bn == "Highest Scoring Half":
+        return {"1st Half":p.get("highest_1st"),"2nd Half":p.get("highest_2nd"),"Draw":p.get("highest_draw")}.get(v)
+    elif bn == "Both Teams Score - First Half":
+        return {"Yes":p.get("fh_gg_yes"),"No":p.get("fh_gg_no")}.get(v)
+    elif bn == "Both Teams To Score - Second Half":
+        return {"Yes":p.get("sh_gg_yes"),"No":p.get("sh_gg_no")}.get(v)
     return None
 
 def translate_bet(bn, v):
@@ -680,6 +714,18 @@ def translate_bet(bn, v):
         return "🟨 Gazdă " + v.replace("Over","Peste").replace("Under","Sub") + " cart."
     elif bn == "Total Cards - Away":
         return "🟨 Oaspete " + v.replace("Over","Peste").replace("Under","Sub") + " cart."
+    elif bn == "Results/Both Teams Score":
+        m = {"Home/Yes":"1 & GG","Draw/Yes":"X & GG","Away/Yes":"2 & GG",
+             "Home/No":"1 & NG","Draw/No":"X & NG","Away/No":"2 & NG"}
+        return m.get(v, v)
+    elif bn == "To Score in Both Halves":
+        return {"Yes":"Gol ambele reprize","No":"NU gol ambele reprize"}.get(v, v)
+    elif bn == "Highest Scoring Half":
+        return {"1st Half":"R1 mai multe goluri","2nd Half":"R2 mai multe goluri","Draw":"Egal goluri"}.get(v, v)
+    elif bn == "Both Teams Score - First Half":
+        return {"Yes":"GG Repriza 1","No":"NG Repriza 1"}.get(v, v)
+    elif bn == "Both Teams To Score - Second Half":
+        return {"Yes":"GG Repriza 2","No":"NG Repriza 2"}.get(v, v)
     return v
 
 def find_value_bets(bets_list, probs, bookmaker_name):
