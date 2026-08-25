@@ -347,8 +347,9 @@ def adjust_probs(probs, home_id, away_id, fixture_id, league_id, season, standin
 def calc_stats(events, team_id, context="all"):
     total = gg = o15 = o25 = o35 = o45 = wins = draws = losses = 0
     gs = gc = cs = odd_g = even_g = 0
-    form_results = []  # last 5 results: W/D/L
-    for ev in events:
+    form_results = []
+    w_gs = w_gc = w_total = 0  # weighted goals for Poisson
+    for idx, ev in enumerate(events):
         is_home = (ev["home_id"] == team_id)
         if context == "home" and not is_home:
             continue
@@ -357,14 +358,18 @@ def calc_stats(events, team_id, context="all"):
         gh, ga = ev["home_goals"], ev["away_goals"]
         tg = gh + ga
         total += 1
+        # Form weighting: recent matches count more
+        weight = 2.0 if total <= 3 else (1.5 if total <= 5 else 1.0)
         if is_home:
             gs += gh; gc += ga
+            w_gs += gh * weight; w_gc += ga * weight; w_total += weight
             if ga == 0: cs += 1
             if gh > ga: wins += 1; form_results.append("W")
             elif gh == ga: draws += 1; form_results.append("D")
             else: losses += 1; form_results.append("L")
         else:
             gs += ga; gc += gh
+            w_gs += ga * weight; w_gc += gh * weight; w_total += weight
             if gh == 0: cs += 1
             if ga > gh: wins += 1; form_results.append("W")
             elif ga == gh: draws += 1; form_results.append("D")
@@ -379,14 +384,17 @@ def calc_stats(events, team_id, context="all"):
     if total == 0:
         return None
     pct = lambda n: round(n / total * 100, 1)
-    # Form: last 5 matches win rate
     last5 = form_results[:5]
     form_w = last5.count("W") if last5 else 0
     form_pts = (last5.count("W") * 3 + last5.count("D")) / max(len(last5), 1)
+    # Weighted averages for Poisson model
+    w_avg_scored = round(w_gs / w_total, 3) if w_total > 0 else round(gs / total, 3)
+    w_avg_conceded = round(w_gc / w_total, 3) if w_total > 0 else round(gc / total, 3)
     return {"total": total, "gg_pct": pct(gg), "o15_pct": pct(o15), "o25_pct": pct(o25),
             "o35_pct": pct(o35), "o45_pct": pct(o45), "win_pct": pct(wins), "draw_pct": pct(draws),
             "loss_pct": pct(losses), "cs_pct": pct(cs),
             "avg_scored": round(gs/total, 2), "avg_conceded": round(gc/total, 2),
+            "w_avg_scored": w_avg_scored, "w_avg_conceded": w_avg_conceded,
             "odd_pct": pct(odd_g), "even_pct": pct(even_g),
             "form_pts": round(form_pts, 2), "form_w5": form_w, "form_str": "".join(last5)}
 
@@ -410,30 +418,73 @@ def calc_h2h_stats(events):
             "o35_pct": pct(o35), "home_win_pct": pct(hw), "draw_pct": pct(dr), "away_win_pct": pct(aw)}
 
 def calc_real_probs(hs, aws, h2h):
+    import math
+    def poisson_pmf(k, lam):
+        if lam <= 0: lam = 0.01
+        return (lam**k * math.exp(-lam)) / math.factorial(k)
+    def poisson_cdf(k, lam):
+        return sum(poisson_pmf(i, lam) for i in range(k+1))
+
     def blend(h, a, hh):
         if hh is not None:
             return round(h * 0.4 + a * 0.4 + hh * 0.2, 1)
         return round((h + a) / 2, 1)
     p = {}
+    # --- POISSON MODEL ---
+    # Expected goals using weighted averages (recent form weighted 2x)
+    h_attack = hs["w_avg_scored"]    # Home team attacking strength
+    h_defend = hs["w_avg_conceded"]  # Home team defensive weakness
+    a_attack = aws["w_avg_scored"]   # Away team attacking strength
+    a_defend = aws["w_avg_conceded"] # Away team defensive weakness
+    # Expected goals per team
+    lambda_home = max(0.3, (h_attack + a_defend) / 2 * 1.1)  # home advantage +10%
+    lambda_away = max(0.2, (a_attack + h_defend) / 2 * 0.9)  # away penalty -10%
+    lambda_total = lambda_home + lambda_away
+    # --- GOAL PROBABILITIES via Poisson ---
+    # Over/Under with Poisson (MUCH more accurate than counting percentages)
+    p_o15 = round((1 - poisson_cdf(1, lambda_total)) * 100, 1)
+    p_o25 = round((1 - poisson_cdf(2, lambda_total)) * 100, 1)
+    p_o35 = round((1 - poisson_cdf(3, lambda_total)) * 100, 1)
+    p_o45 = round((1 - poisson_cdf(4, lambda_total)) * 100, 1)
+    # Blend Poisson (60%) with historical (40%) for robustness
     hgg = h2h["gg_pct"] if h2h else None
     p["gg"] = blend(hs["gg_pct"], aws["gg_pct"], hgg)
     p["ng"] = round(100 - p["gg"], 1)
-    for key, hk in [("over15","o15_pct"),("over25","o25_pct"),("over35","o35_pct")]:
-        hh = h2h[hk] if h2h else None
-        p[key] = blend(hs[hk], aws[hk], hh)
-        p[key.replace("over","under")] = round(100 - p[key], 1)
-    # Over/Under 4.5
-    p["over45"] = blend(hs.get("o45_pct",0), aws.get("o45_pct",0), None)
-    p["under45"] = round(100 - p["over45"], 1)
+    ho15 = h2h["o15_pct"] if h2h else None
+    ho25 = h2h["o25_pct"] if h2h else None
+    ho35 = h2h["o35_pct"] if h2h else None
+    hist_o15 = blend(hs["o15_pct"], aws["o15_pct"], ho15)
+    hist_o25 = blend(hs["o25_pct"], aws["o25_pct"], ho25)
+    hist_o35 = blend(hs["o35_pct"], aws["o35_pct"], ho35)
+    p["over15"] = round(p_o15 * 0.6 + hist_o15 * 0.4, 1)
+    p["over25"] = round(p_o25 * 0.6 + hist_o25 * 0.4, 1)
+    p["over35"] = round(p_o35 * 0.6 + hist_o35 * 0.4, 1)
+    p["over45"] = round(p_o45 * 0.6 + blend(hs.get("o45_pct",0), aws.get("o45_pct",0), None) * 0.4, 1)
+    for k in ["over15","over25","over35","over45"]:
+        p[k] = max(2, min(98, p[k]))
+        p[k.replace("over","under")] = round(100 - p[k], 1)
+    # --- 1X2 via Poisson matrix ---
+    max_goals = 7
+    p_home_win = p_draw = p_away_win = 0
+    for i in range(max_goals):
+        for j in range(max_goals):
+            prob_ij = poisson_pmf(i, lambda_home) * poisson_pmf(j, lambda_away)
+            if i > j: p_home_win += prob_ij
+            elif i == j: p_draw += prob_ij
+            else: p_away_win += prob_ij
+    # Blend Poisson 1X2 (55%) with historical (45%)
     hhw = h2h["home_win_pct"] if h2h else None
     hdw = h2h["draw_pct"] if h2h else None
     haw = h2h["away_win_pct"] if h2h else None
-    r1 = blend(hs["win_pct"], aws["loss_pct"], hhw) + 5
-    rx = blend(hs["draw_pct"], aws["draw_pct"], hdw)
-    r2 = max(blend(hs["loss_pct"], aws["win_pct"], haw) - 5, 2)
-    t = r1 + rx + r2
+    hist_home = blend(hs["win_pct"], aws["loss_pct"], hhw)
+    hist_draw = blend(hs["draw_pct"], aws["draw_pct"], hdw)
+    hist_away = blend(hs["loss_pct"], aws["win_pct"], haw)
+    raw_home = p_home_win * 100 * 0.55 + hist_home * 0.45
+    raw_draw = p_draw * 100 * 0.55 + hist_draw * 0.45
+    raw_away = p_away_win * 100 * 0.55 + hist_away * 0.45
+    t = raw_home + raw_draw + raw_away
     if t > 0:
-        p["home"] = round(r1/t*100,1); p["draw"] = round(rx/t*100,1); p["away"] = round(r2/t*100,1)
+        p["home"] = round(raw_home/t*100,1); p["draw"] = round(raw_draw/t*100,1); p["away"] = round(raw_away/t*100,1)
     else:
         p["home"]=40.0; p["draw"]=30.0; p["away"]=30.0
     p["home_draw"] = round(p["home"]+p["draw"],1)
@@ -444,56 +495,47 @@ def calc_real_probs(hs, aws, h2h):
         p["dnb_home"]=round(p["home"]/hat*100,1); p["dnb_away"]=round(p["away"]/hat*100,1)
     else:
         p["dnb_home"]=50.0; p["dnb_away"]=50.0
-    # First Half
-    p["fh_over05"]=round(min(p["over15"]*0.85,99),1)
-    p["fh_over15"]=round(min(p["over25"]*0.65,95),1)
+    # First Half (Poisson-derived)
+    lam_fh = lambda_total * 0.44  # ~44% of goals in first half
+    p["fh_over05"]=round(max(2, min(98, (1-poisson_cdf(0, lam_fh))*100)),1)
+    p["fh_over15"]=round(max(2, min(95, (1-poisson_cdf(1, lam_fh))*100)),1)
     p["fh_under05"]=round(100-p["fh_over05"],1)
     p["fh_under15"]=round(100-p["fh_over15"],1)
-    p["fh_home"]=round(min(p["home"]*1.05,85),1)
-    p["fh_draw"]=round(min(40,p["draw"]*1.3),1)
-    p["fh_away"]=round(100-p["fh_home"]-p["fh_draw"],1)
+    p["fh_home"]=round(min(p["home"]*0.9,80),1)
+    p["fh_draw"]=round(min(45,p["draw"]*1.4),1)
+    p["fh_away"]=round(max(5, 100-p["fh_home"]-p["fh_draw"]),1)
     # Second Half
-    p["sh_over05"]=round(min(p["over15"]*0.90,99),1)
-    p["sh_over15"]=round(min(p["over25"]*0.70,95),1)
+    lam_sh = lambda_total * 0.56  # ~56% of goals in second half
+    p["sh_over05"]=round(max(2, min(98, (1-poisson_cdf(0, lam_sh))*100)),1)
+    p["sh_over15"]=round(max(2, min(95, (1-poisson_cdf(1, lam_sh))*100)),1)
     p["sh_under05"]=round(100-p["sh_over05"],1)
     p["sh_under15"]=round(100-p["sh_over15"],1)
     p["sh_home"]=round(p["home"]*0.95,1)
-    p["sh_draw"]=round(min(40,p["draw"]*1.2),1)
-    p["sh_away"]=round(100-p["sh_home"]-p["sh_draw"],1)
+    p["sh_draw"]=round(min(42,p["draw"]*1.2),1)
+    p["sh_away"]=round(max(5, 100-p["sh_home"]-p["sh_draw"]),1)
     # Odd/Even goals
     p["odd"]=blend(hs.get("odd_pct",50), aws.get("odd_pct",50), None)
     p["even"]=round(100-p["odd"],1)
-    # Team total goals (home team over/under)
-    avg_h = hs["avg_scored"]
-    avg_a = aws["avg_scored"]
-    p["home_o05"]=round(min(85 + avg_h*5, 99),1); p["home_u05"]=round(100-p["home_o05"],1)
-    p["home_o15"]=round(min(40 + avg_h*15, 95),1); p["home_u15"]=round(100-p["home_o15"],1)
-    p["away_o05"]=round(min(80 + avg_a*5, 99),1); p["away_u05"]=round(100-p["away_o05"],1)
-    p["away_o15"]=round(min(35 + avg_a*15, 95),1); p["away_u15"]=round(100-p["away_o15"],1)
-    # Asian Handicap approximations (all lines)
-    p["ah_home_-05"]=p["home"]; p["ah_away_+05"]=round(100-p["home"],1)
-    p["ah_home_-10"]=round(max(p["home"]-15,5),1); p["ah_away_+10"]=round(100-p["ah_home_-10"],1)
-    p["ah_home_-15"]=round(max(p["home"]-25,3),1); p["ah_away_+15"]=round(100-p["ah_home_-15"],1)
-    p["ah_home_-20"]=round(max(p["home"]-35,2),1); p["ah_away_+20"]=round(100-p["ah_home_-20"],1)
-    p["ah_home_-25"]=round(max(p["home"]-45,1),1); p["ah_away_+25"]=round(100-p["ah_home_-25"],1)
-    p["ah_home_+05"]=round(p["home"]+p["draw"],1); p["ah_away_-05"]=round(100-p["ah_home_+05"],1)
-    p["ah_home_+10"]=round(min(p["home"]+p["draw"]+10,98),1); p["ah_away_-10"]=round(100-p["ah_home_+10"],1)
-    p["ah_home_+15"]=round(min(p["home"]+p["draw"]+20,99),1); p["ah_away_-15"]=round(100-p["ah_home_+15"],1)
-    # Quarter lines (average of adjacent half lines)
-    p["ah_home_-025"]=round((p["home"]+p["ah_home_+05"])/2,1); p["ah_away_+025"]=round(100-p["ah_home_-025"],1)
-    p["ah_home_-075"]=round((p["ah_home_-05"]+p["ah_home_-10"])/2,1); p["ah_away_+075"]=round(100-p["ah_home_-075"],1)
-    p["ah_home_-125"]=round((p["ah_home_-10"]+p["ah_home_-15"])/2,1); p["ah_away_+125"]=round(100-p["ah_home_-125"],1)
-    p["ah_home_+025"]=round((p["ah_home_+05"]+p["home"]+p["draw"])/2,1); p["ah_away_-025"]=round(100-p["ah_home_+025"],1)
-    # Clean Sheet
-    p["cs_home_yes"]=round(blend(hs["cs_pct"], 100-aws["avg_scored"]*25, None),1)
+    # Team total goals (Poisson per team)
+    p["home_o05"]=round(max(2, min(98, (1-poisson_pmf(0, lambda_home))*100)),1); p["home_u05"]=round(100-p["home_o05"],1)
+    p["home_o15"]=round(max(2, min(95, (1-poisson_cdf(1, lambda_home))*100)),1); p["home_u15"]=round(100-p["home_o15"],1)
+    p["away_o05"]=round(max(2, min(98, (1-poisson_pmf(0, lambda_away))*100)),1); p["away_u05"]=round(100-p["away_o05"],1)
+    p["away_o15"]=round(max(2, min(95, (1-poisson_cdf(1, lambda_away))*100)),1); p["away_u15"]=round(100-p["away_o15"],1)
+    # Clean Sheet (Poisson: P(0 goals) for opponent)
+    p["cs_home_yes"]=round(max(2, min(60, poisson_pmf(0, lambda_away)*100)),1)
     p["cs_home_no"]=round(100-p["cs_home_yes"],1)
-    p["cs_away_yes"]=round(blend(aws["cs_pct"], 100-hs["avg_scored"]*25, None),1)
+    p["cs_away_yes"]=round(max(2, min(50, poisson_pmf(0, lambda_home)*100)),1)
     p["cs_away_no"]=round(100-p["cs_away_yes"],1)
     # Win to Nil
     p["wtn_home"]=round(p["home"]*p["cs_home_yes"]/100,1)
     p["wtn_home_no"]=round(100-p["wtn_home"],1)
     p["wtn_away"]=round(p["away"]*p["cs_away_yes"]/100,1)
     p["wtn_away_no"]=round(100-p["wtn_away"],1)
+    # GG Poisson: P(both score) = 1 - P(home=0) - P(away=0) + P(both=0)
+    p_gg_poisson = (1 - poisson_pmf(0, lambda_home) - poisson_pmf(0, lambda_away) + poisson_pmf(0, lambda_home)*poisson_pmf(0, lambda_away)) * 100
+    p["gg"] = round(p["gg"] * 0.4 + p_gg_poisson * 0.6, 1)  # blend with Poisson
+    p["gg"] = max(5, min(95, p["gg"]))
+    p["ng"] = round(100 - p["gg"], 1)
     # Results/Both Teams Score combo
     p["home_gg_yes"]=round(p["home"]*p["gg"]/100,1)
     p["draw_gg_yes"]=round(p["draw"]*p["gg"]/100,1)
@@ -507,17 +549,20 @@ def calc_real_probs(hs, aws, h2h):
     p["score_both_halves_yes"] = round(fh_goal_pct * sh_goal_pct / 100, 1)
     p["score_both_halves_no"] = round(100 - p["score_both_halves_yes"], 1)
     # Highest Scoring Half
-    p["highest_1st"] = round(max(25, 100 - sh_goal_pct * 0.6), 1)
-    p["highest_2nd"] = round(max(35, sh_goal_pct * 0.6), 1)
-    p["highest_draw"] = round(100 - p["highest_1st"] - p["highest_2nd"], 1)
-    # Both Teams Score - First Half (GG in R1)
-    fh_gg = round(p["gg"] * 0.45, 1)
-    p["fh_gg_yes"] = min(fh_gg, 40)
+    p["highest_1st"] = round(max(20, 100 - sh_goal_pct * 0.6), 1)
+    p["highest_2nd"] = round(max(30, sh_goal_pct * 0.6), 1)
+    p["highest_draw"] = round(max(5, 100 - p["highest_1st"] - p["highest_2nd"]), 1)
+    # Both Teams Score - First Half
+    fh_gg = round(p["gg"] * 0.40, 1)
+    p["fh_gg_yes"] = max(3, min(fh_gg, 40))
     p["fh_gg_no"] = round(100 - p["fh_gg_yes"], 1)
-    # Both Teams Score - Second Half (GG in R2)
-    sh_gg = round(p["gg"] * 0.55, 1)
-    p["sh_gg_yes"] = min(sh_gg, 45)
+    # Both Teams Score - Second Half
+    sh_gg = round(p["gg"] * 0.52, 1)
+    p["sh_gg_yes"] = max(4, min(sh_gg, 48))
     p["sh_gg_no"] = round(100 - p["sh_gg_yes"], 1)
+    # Store lambdas for Kelly
+    p["_lambda_home"] = round(lambda_home, 3)
+    p["_lambda_away"] = round(lambda_away, 3)
     return p
 
 def add_card_probs(p, h_cards, a_cards):
@@ -553,25 +598,41 @@ def add_card_probs(p, h_cards, a_cards):
     p["acards_u15"] = round(100 - p["acards_o15"], 1)
     return p
 
-def calc_confidence(ev, home_stats, away_stats, h2h_stats):
-    """Calculate confidence score 1-100 combining EV, form, data quality, H2H."""
+def calc_confidence(ev, prob, home_stats, away_stats, h2h_stats, league_name=""):
+    """Confidence 1-100: EV + Prob + Form + Liga + H2H."""
     score = 0
-    # EV component (0-40 points)
-    score += min(ev * 2, 40)
-    # Data quality (0-20 points)
-    data_pts = min(home_stats["total"], 15) + min(away_stats["total"], 15)
-    score += round(data_pts / 30 * 20)
-    # Form component (0-20 points)
+    score += min(ev * 1.5, 25)
+    score += round(min(prob / 100 * 30, 30))
     h_form = home_stats.get("form_pts", 1.0)
     a_form = away_stats.get("form_pts", 1.0)
-    avg_form = (h_form + a_form) / 2
-    score += round(min(avg_form / 3 * 20, 20))
-    # H2H bonus (0-20 points)
-    if h2h_stats and h2h_stats["total"] >= 3:
-        score += 15
-    elif h2h_stats:
-        score += 8
-    return min(score, 100)
+    score += round(min((h_form + a_form) / 2 / 3 * 20, 20))
+    score += {1: 15, 2: 10, 3: 5}.get(get_league_tier(league_name), 5)
+    if h2h_stats and h2h_stats["total"] >= 3: score += 10
+    elif h2h_stats: score += 5
+    return min(max(int(score), 1), 100)
+
+TIER1 = {"premier league","la liga","serie a","bundesliga","ligue 1",
+    "champions league","europa league","conference league","eredivisie",
+    "primeira liga","championship","serie b","bundesliga 2","mls",
+    "liga mx","brasileirao serie a","copa libertadores"}
+TIER2 = {"scottish premiership","super league","belgian pro league",
+    "ekstraklasa","czech liga","austrian bundesliga","danish superliga",
+    "allsvenskan","eliteserien","k league 1","j1 league","a-league",
+    "brasileirao serie b","liga profesional argentina","superettan",
+    "jupiler pro league","super lig","copa sudamericana"}
+
+def get_league_tier(ln):
+    ll = ln.lower()
+    if any(t in ll for t in TIER1): return 1
+    if any(t in ll for t in TIER2): return 2
+    return 3
+
+def calc_kelly(prob, odds):
+    """Kelly/4 conservative: max 10% of bankroll."""
+    p = prob / 100; b = odds - 1
+    if b <= 0: return 0
+    k = (p * b - (1-p)) / b
+    return round(min(max(k / 4 * 100, 0), 10), 1)
 
 # ─────────────────────────────────────────────
 # EV CALCULATION
@@ -812,8 +873,10 @@ def load_all_data():
         sorted_vb = sorted(best_by_mkt.values(), key=lambda x: x["ev"], reverse=True)
         # Best pick = highest combined score (EV × 0.4 + Prob × 0.6)
         best = max(sorted_vb, key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6)
-        # Confidence score
-        conf = calc_confidence(best["ev"], hstats, astats, h2h_st)
+        # Confidence score (now includes prob and league tier)
+        conf = calc_confidence(best["ev"], best["real_prob"], hstats, astats, h2h_st, fix["league"])
+        # Kelly Criterion
+        kelly = calc_kelly(best["real_prob"], best["odds"])
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
             "home_team": fix["home_team"], "away_team": fix["away_team"],
             "league": fix["league"], "country": fix["country"],
@@ -823,7 +886,7 @@ def load_all_data():
             "best_bookmaker": best["bookmaker"], "all_value_bets": sorted_vb,
             "home_stats": hstats, "away_stats": astats, "h2h_stats": h2h_st, "probs": probs,
             "adjustments": adjustments, "home_injuries": n_h_inj, "away_injuries": n_a_inj,
-            "confidence": conf,
+            "confidence": conf, "kelly": kelly,
             "home_form": hstats.get("form_str",""), "away_form": astats.get("form_str","")})
     results.sort(key=lambda x: x["timestamp"])
     return results, today
@@ -892,8 +955,8 @@ if not matches:
 else:
     st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>"
                 f"🎯 Value Bets — {total_vb} meciuri cu valoare</div>", unsafe_allow_html=True)
-    h_cols = st.columns([0.5, 1.8, 1.0, 0.5, 1.3, 0.5, 0.5, 0.5, 0.5, 0.6])
-    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pronostic","💰 Cotă","✅ Prob","📈 EV","🎯","🏦"]):
+    h_cols = st.columns([0.5, 1.7, 1.0, 0.5, 1.2, 0.5, 0.5, 0.5, 0.4, 0.5, 0.5])
+    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pariu","💰 Cotă","✅ Prob","📈 EV","🎯","💵 Miză","🏦"]):
         col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;"
                      f"text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
     st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">',
@@ -902,7 +965,7 @@ else:
         ev = m["best_ev"]
         color = ev_color(ev)
         bg = ev_bg(ev)
-        cols = st.columns([0.5, 1.8, 1.0, 0.5, 1.3, 0.5, 0.5, 0.5, 0.5, 0.6])
+        cols = st.columns([0.5, 1.7, 1.0, 0.5, 1.2, 0.5, 0.5, 0.5, 0.4, 0.5, 0.5])
         cols[0].markdown(f"<div style='border-left:4px solid {color};padding-left:10px;"
                          f"font-weight:700;color:#cbd5e1;'>{m['time']}</div>", unsafe_allow_html=True)
         cols[1].markdown(f"<div style='font-weight:700;color:#f1f5f9;font-size:0.95rem;'>"
@@ -917,20 +980,22 @@ else:
                          f"border-radius:10px;'>{m['best_market']}</span>", unsafe_allow_html=True)
         cols[5].markdown(f"<div style='font-size:1.05rem;font-weight:700;color:#f1f5f9;'>"
                          f"{m['best_odds']}</div>", unsafe_allow_html=True)
-        # Prob. Reală
         prob = m["best_prob"]
-        prob_color = "#34d399" if prob >= 65 else "#f59e0b" if prob >= 50 else "#ef4444"
+        prob_color = "#34d399" if prob >= 70 else "#f59e0b" if prob >= 65 else "#ef4444"
         cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{prob_color};'>{prob}%</div>",
                          unsafe_allow_html=True)
         cols[7].markdown(f"<div style='font-size:1rem;font-weight:800;color:{color};'>+{ev}%</div>",
                          unsafe_allow_html=True)
-        # Confidence score
         conf = m.get("confidence", 0)
         conf_color = "#34d399" if conf >= 75 else "#f59e0b" if conf >= 50 else "#ef4444"
+        conf_icon = "🔥" if conf >= 75 else "✅" if conf >= 60 else "⚠️"
         cols[8].markdown(f"<div style='font-size:0.9rem;font-weight:800;color:{conf_color};'>"
-                         f"{conf}</div>", unsafe_allow_html=True)
+                         f"{conf_icon}{conf}</div>", unsafe_allow_html=True)
+        kelly = m.get("kelly", 0)
+        cols[9].markdown(f"<div style='font-size:0.9rem;font-weight:700;color:#a78bfa;'>"
+                         f"{kelly}%</div>", unsafe_allow_html=True)
         bk_c = "#f59e0b" if m["best_bookmaker"] == "Betano" else "#ec4899"
-        cols[9].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
+        cols[10].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
                          f"{m['best_bookmaker']}</div>", unsafe_allow_html=True)
         if i < len(matches) - 1:
             st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">',
