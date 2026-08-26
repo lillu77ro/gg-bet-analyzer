@@ -80,7 +80,7 @@ SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
                   "Double Chance","Home/Away","Goals Over/Under First Half",
                   "Goals Over/Under Second Half","Second Half Winner",
                   "First Half Winner","Total - Home",
-                  "Total - Away","Odd/Even","Clean Sheet - Home",
+                  "Total - Away","Clean Sheet - Home",
                   "Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away",
                   "Total Cards","Total Cards - Home","Total Cards - Away",
                   "Results/Both Teams Score","To Score in Both Halves",
@@ -875,6 +875,9 @@ def load_all_data():
         best = max(sorted_vb, key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6)
         # Confidence score (now includes prob and league tier)
         conf = calc_confidence(best["ev"], best["real_prob"], hstats, astats, h2h_st, fix["league"])
+        # SKIP low confidence matches (⚠️ = risky, don't show)
+        if conf < 60:
+            continue
         # Kelly Criterion
         kelly = calc_kelly(best["real_prob"], best["odds"])
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
