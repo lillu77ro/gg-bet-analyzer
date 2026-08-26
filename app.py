@@ -75,17 +75,20 @@ EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
 # Also filter team names (catch " W" suffix)
 EXCLUDE_TEAM_SUFFIXES = [" W", " Women", " Ladies", " Femenino", " Femminile", " Frauen"]
 
-# ALL supported betting markets (fără Asian Handicap — cotele din API nu corespund cu realitatea!)
+# ALL supported betting markets
 SUPPORTED_BETS = {"Match Winner","Both Teams Score","Goals Over/Under",
                   "Double Chance","Home/Away","Goals Over/Under First Half",
                   "Goals Over/Under Second Half","Second Half Winner",
-                  "First Half Winner","Total - Home",
+                  "First Half Winner","Asian Handicap","Total - Home",
                   "Total - Away","Clean Sheet - Home",
                   "Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away",
                   "Total Cards","Total Cards - Home","Total Cards - Away",
                   "Results/Both Teams Score","To Score in Both Halves",
                   "Highest Scoring Half","Both Teams Score - First Half",
                   "Both Teams To Score - Second Half"}
+
+# Asian Handicap ONLY from Betano (Superbet AH odds are broken!)
+AH_BLOCKED_BOOKMAKERS = {"Superbet"}
 
 # ─────────────────────────────────────────────
 # HTTP
@@ -521,6 +524,30 @@ def calc_real_probs(hs, aws, h2h):
     p["home_o15"]=round(max(2, min(95, (1-poisson_cdf(1, lambda_home))*100)),1); p["home_u15"]=round(100-p["home_o15"],1)
     p["away_o05"]=round(max(2, min(98, (1-poisson_pmf(0, lambda_away))*100)),1); p["away_u05"]=round(100-p["away_o05"],1)
     p["away_o15"]=round(max(2, min(95, (1-poisson_cdf(1, lambda_away))*100)),1); p["away_u15"]=round(100-p["away_o15"],1)
+    # Asian Handicap probabilities (Poisson-based)
+    # -0.5: team must WIN (not draw). P(home win) from Poisson matrix
+    p["ah_home_-05"]=round(p_home_win*100,1); p["ah_away_+05"]=round(100-p["ah_home_-05"],1)
+    # +0.5: team can WIN or DRAW
+    p["ah_home_+05"]=round((p_home_win+p_draw)*100,1); p["ah_away_-05"]=round(100-p["ah_home_+05"],1)
+    # -1: must win by 2+
+    p_hw2 = sum(poisson_pmf(i, lambda_home)*poisson_pmf(j, lambda_away) for i in range(max_goals) for j in range(max_goals) if i-j>=2)
+    p["ah_home_-10"]=round(max(2, p_hw2*100),1); p["ah_away_+10"]=round(100-p["ah_home_-10"],1)
+    # +1: can lose by 1 or less
+    p_not_lose2 = sum(poisson_pmf(i, lambda_home)*poisson_pmf(j, lambda_away) for i in range(max_goals) for j in range(max_goals) if i-j>=-1)
+    p["ah_home_+10"]=round(min(98, p_not_lose2*100),1); p["ah_away_-10"]=round(100-p["ah_home_+10"],1)
+    # -1.5: must win by 2+
+    p["ah_home_-15"]=round(max(2, p_hw2*100),1); p["ah_away_+15"]=round(100-p["ah_home_-15"],1)
+    # +1.5: can lose by 1 or less
+    p["ah_home_+15"]=round(min(98, p_not_lose2*100),1); p["ah_away_-15"]=round(100-p["ah_home_+15"],1)
+    # -2: must win by 3+
+    p_hw3 = sum(poisson_pmf(i, lambda_home)*poisson_pmf(j, lambda_away) for i in range(max_goals) for j in range(max_goals) if i-j>=3)
+    p["ah_home_-20"]=round(max(1, p_hw3*100),1); p["ah_away_+20"]=round(100-p["ah_home_-20"],1)
+    p["ah_home_-25"]=round(max(1, p_hw3*100),1); p["ah_away_+25"]=round(100-p["ah_home_-25"],1)
+    # Quarter lines (average of adjacent)
+    p["ah_home_-025"]=round((p["ah_home_-05"]+p["ah_home_+05"])/2,1); p["ah_away_+025"]=round(100-p["ah_home_-025"],1)
+    p["ah_home_-075"]=round((p["ah_home_-05"]+p["ah_home_-10"])/2,1); p["ah_away_+075"]=round(100-p["ah_home_-075"],1)
+    p["ah_home_-125"]=round((p["ah_home_-10"]+p["ah_home_-15"])/2,1); p["ah_away_+125"]=round(100-p["ah_home_-125"],1)
+    p["ah_home_+025"]=round((p["ah_home_+05"]+p["ah_home_-05"])/2+p_draw*50,1); p["ah_away_-025"]=round(100-p["ah_home_+025"],1)
     # Clean Sheet (Poisson: P(0 goals) for opponent)
     p["cs_home_yes"]=round(max(2, min(60, poisson_pmf(0, lambda_away)*100)),1)
     p["cs_home_no"]=round(100-p["cs_home_yes"],1)
@@ -794,6 +821,9 @@ def find_value_bets(bets_list, probs, bookmaker_name):
     for bet in bets_list:
         bn = bet.get("name", "")
         if bn not in SUPPORTED_BETS:
+            continue
+        # Skip AH from bookmakers with broken odds (Superbet)
+        if bn == "Asian Handicap" and bookmaker_name in AH_BLOCKED_BOOKMAKERS:
             continue
         for val in bet.get("values", []):
             try:
