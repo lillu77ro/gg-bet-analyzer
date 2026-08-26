@@ -112,7 +112,7 @@ def api_get_paged(endpoint, params=None):
         data = r.json()
         all_results.extend(data.get("response", []))
         total_pages = data.get("paging", {}).get("total", 1)
-        for page in range(2, min(total_pages + 1, 6)):
+        for page in range(2, min(total_pages + 1, 21)):
             params["page"] = page
             r2 = requests.get(f"{API_BASE}{endpoint}", headers=API_HEADERS, params=params, timeout=30)
             r2.raise_for_status()
