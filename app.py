@@ -708,6 +708,7 @@ def map_odds_to_prob(bn, v, p):
         elif "Over 1.5" in v: return p.get("away_o15")
         elif "Under 1.5" in v: return p.get("away_u15")
     elif bn == "Asian Handicap":
+        # Only standard lines — quarter lines (±0.25, ±0.75, ±1.25) have fake API odds!
         m = {"Home -0.5":"ah_home_-05","Away +0.5":"ah_away_+05",
              "Home -1":"ah_home_-10","Away +1":"ah_away_+10",
              "Home -1.5":"ah_home_-15","Away +1.5":"ah_away_+15",
@@ -715,11 +716,7 @@ def map_odds_to_prob(bn, v, p):
              "Home -2.5":"ah_home_-25","Away +2.5":"ah_away_+25",
              "Home +0.5":"ah_home_+05","Away -0.5":"ah_away_-05",
              "Home +1":"ah_home_+10","Away -1":"ah_away_-10",
-             "Home +1.5":"ah_home_+15","Away -1.5":"ah_away_-15",
-             "Home -0.25":"ah_home_-025","Away +0.25":"ah_away_+025",
-             "Home -0.75":"ah_home_-075","Away +0.75":"ah_away_+075",
-             "Home -1.25":"ah_home_-125","Away +1.25":"ah_away_+125",
-             "Home +0.25":"ah_home_+025","Away -0.25":"ah_away_-025"}
+             "Home +1.5":"ah_home_+15","Away -1.5":"ah_away_-15"}
         return p.get(m.get(v))
     elif bn == "Clean Sheet - Home":
         return {"Yes":p.get("cs_home_yes"),"No":p.get("cs_home_no")}.get(v)
