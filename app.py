@@ -61,11 +61,11 @@ BETANO_ID = 32
 SUPERBET_ID = 34
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
-MIN_EV = 10.0
-PROB_DISCOUNT = 0.92  # 8% conservative discount — reduces false positives
+MIN_EV = 8.0
+PROB_DISCOUNT = 0.95  # 5% conservative discount — balanced
 NUM_MATCHES = 15
 NUM_H2H = 10
-MIN_DATA_MATCHES = 10  # minim 10 meciuri date pentru o analiză validă
+MIN_DATA_MATCHES = 8  # minim 8 meciuri
 RO_TZ = timezone(timedelta(hours=3))
 
 EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23",
@@ -841,7 +841,7 @@ def find_value_bets(bets_list, probs, bookmaker_name):
             rp_adj = round(rp * PROB_DISCOUNT, 1)
             ip = round(1/odds*100, 1)
             ev = round(rp_adj - ip, 1)
-            if ev >= MIN_EV and rp_adj >= 68:
+            if ev >= MIN_EV and rp_adj >= 65:
                 vbs.append({"market": translate_bet(bn, vl), "odds": odds,
                     "real_prob": rp_adj, "implied_prob": ip, "ev": ev, "bookmaker": bookmaker_name})
     return vbs
@@ -908,8 +908,8 @@ def load_all_data():
         best = max(sorted_vb, key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6)
         # Confidence score (now includes prob and league tier)
         conf = calc_confidence(best["ev"], best["real_prob"], hstats, astats, h2h_st, fix["league"])
-        # SKIP low confidence matches — only ✅ and 🔥
-        if conf < 65:
+        # SKIP low confidence matches
+        if conf < 60:
             continue
         # Kelly Criterion
         kelly = calc_kelly(best["real_prob"], best["odds"])
