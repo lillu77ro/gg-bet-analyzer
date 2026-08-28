@@ -834,11 +834,15 @@ def find_value_bets(bets_list, probs, bookmaker_name):
             rp = map_odds_to_prob(bn, vl, probs)
             if rp is None:
                 continue
-            # Apply conservative discount — reduces overconfident predictions
-            rp_adj = round(rp * PROB_DISCOUNT, 1)
             ip = round(1/odds*100, 1)
+            # CRITICAL: Blend our model with bookmaker probability
+            # Bookmaker = 55% weight (they have better data), our model = 45%
+            # This prevents overconfident "phantom value bets"
+            rp_blended = round(ip * 0.55 + rp * 0.45, 1)
+            # Apply conservative discount
+            rp_adj = round(rp_blended * PROB_DISCOUNT, 1)
             ev = round(rp_adj - ip, 1)
-            if ev >= MIN_EV and rp_adj >= 65:
+            if ev >= MIN_EV and rp_adj >= 55:
                 vbs.append({"market": translate_bet(bn, vl), "odds": odds,
                     "real_prob": rp_adj, "implied_prob": ip, "ev": ev, "bookmaker": bookmaker_name})
     return vbs
