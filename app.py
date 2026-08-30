@@ -61,7 +61,7 @@ BETANO_ID = 32
 SUPERBET_ID = 34
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
-MIN_EV = 8.0
+MIN_EV = 5.0
 PROB_DISCOUNT = 0.95  # 5% conservative discount — balanced
 NUM_MATCHES = 15
 NUM_H2H = 10
@@ -904,26 +904,25 @@ def load_all_data():
             k = vb["market"]
             if k not in best_by_mkt or vb["odds"] > best_by_mkt[k]["odds"]:
                 best_by_mkt[k] = vb
-        sorted_vb = sorted(best_by_mkt.values(), key=lambda x: x["ev"], reverse=True)
-        # Best pick = highest combined score (EV × 0.4 + Prob × 0.6)
-        best = max(sorted_vb, key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6)
-        # Confidence score (now includes prob and league tier)
+        sorted_vb = sorted(best_by_mkt.values(), key=lambda x: x["ev"] * 0.4 + x["real_prob"] * 0.6, reverse=True)
+        # Top 3 picks
+        top3 = sorted_vb[:3]
+        for pick in top3:
+            pick["kelly"] = calc_kelly(pick["real_prob"], pick["odds"])
+            # Confidence level: 🟢🟡🔴
+            if pick["ev"] >= 10 and pick["real_prob"] >= 60:
+                pick["level"] = "🟢"
+            elif pick["ev"] >= 5 and pick["real_prob"] >= 55:
+                pick["level"] = "🟡"
+            else:
+                pick["level"] = "🔴"
+        best = top3[0]
         conf = calc_confidence(best["ev"], best["real_prob"], hstats, astats, h2h_st, fix["league"])
-        # SKIP low confidence matches
-        if conf < 60:
-            continue
-        # Kelly Criterion
-        kelly = calc_kelly(best["real_prob"], best["odds"])
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
             "home_team": fix["home_team"], "away_team": fix["away_team"],
             "league": fix["league"], "country": fix["country"],
             "referee": fix.get("referee", ""),
-            "best_market": best["market"], "best_odds": best["odds"],
-            "best_ev": best["ev"], "best_prob": best["real_prob"],
-            "best_bookmaker": best["bookmaker"], "all_value_bets": sorted_vb,
-            "home_stats": hstats, "away_stats": astats, "h2h_stats": h2h_st, "probs": probs,
-            "adjustments": adjustments, "home_injuries": n_h_inj, "away_injuries": n_a_inj,
-            "confidence": conf, "kelly": kelly,
+            "top3": top3, "confidence": conf,
             "home_form": hstats.get("form_str",""), "away_form": astats.get("form_str","")})
     results.sort(key=lambda x: x["timestamp"])
     return results, today
@@ -968,22 +967,22 @@ st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 # SUMMARY
 total_vb = len(matches)
-high_ev = len([m for m in matches if m["best_ev"] >= 15])
-avg_ev = round(sum(m["best_ev"] for m in matches) / max(total_vb, 1), 1)
-total_mkts = sum(len(m["all_value_bets"]) for m in matches)
+total_picks = sum(len(m["top3"]) for m in matches)
+green_picks = sum(1 for m in matches for p in m["top3"] if p["level"] == "🟢")
+avg_ev = round(sum(m["top3"][0]["ev"] for m in matches) / max(total_vb, 1), 1) if matches else 0
 
 mc = st.columns(4)
 for col, (icon, val, label, color) in zip(mc, [
-    ("🎯", str(total_vb), "Value Bets", "#38bdf8"),
-    ("🔥", str(high_ev), "High EV (>15%)", "#34d399"),
-    ("⚽", str(total_mkts), "Piețe cu valoare", "#f59e0b"),
-    ("📈", f"+{avg_ev}%", "EV Mediu", "#a78bfa")]):
+    ("🎯", str(total_vb), "Meciuri analizate", "#38bdf8"),
+    ("🟢", str(green_picks), "Încredere MARE", "#34d399"),
+    ("⚽", str(total_picks), "Total pariuri", "#f59e0b"),
+    ("📈", f"+{avg_ev}%", "EV Mediu #1", "#a78bfa")]):
     col.markdown(f"<div class='metric-card'><div class='value' style='color:{color};'>{icon} {val}</div>"
                  f"<div class='label'>{label}</div></div>", unsafe_allow_html=True)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-# TABLE
+# MATCHES
 if not matches:
     st.markdown("<div style='text-align:center;padding:3rem;color:#64748b;font-size:1.2rem;'>"
                 "🔍 Nu am găsit value bets azi.<br>"
@@ -991,52 +990,91 @@ if not matches:
                 "</div>", unsafe_allow_html=True)
 else:
     st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>"
-                f"🎯 Value Bets — {total_vb} meciuri cu valoare</div>", unsafe_allow_html=True)
-    h_cols = st.columns([0.5, 1.7, 1.0, 0.5, 1.2, 0.5, 0.5, 0.5, 0.4, 0.5, 0.5])
-    for col, h in zip(h_cols, ["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pariu","💰 Cotă","✅ Prob","📈 EV","🎯","💵 Miză","🏦"]):
-        col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;"
-                     f"text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
-    st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">',
-                unsafe_allow_html=True)
+                f"🎯 {total_vb} meciuri cu valoare — TOP 3 pariuri per meci</div>", unsafe_allow_html=True)
     for i, m in enumerate(matches):
-        ev = m["best_ev"]
-        color = ev_color(ev)
-        bg = ev_bg(ev)
-        cols = st.columns([0.5, 1.7, 1.0, 0.5, 1.2, 0.5, 0.5, 0.5, 0.4, 0.5, 0.5])
-        cols[0].markdown(f"<div style='border-left:4px solid {color};padding-left:10px;"
-                         f"font-weight:700;color:#cbd5e1;'>{m['time']}</div>", unsafe_allow_html=True)
-        cols[1].markdown(f"<div style='font-weight:700;color:#f1f5f9;font-size:0.95rem;'>"
-                         f"{m['home_team']} <span style='color:#64748b;'>vs</span> {m['away_team']}</div>",
-                         unsafe_allow_html=True)
-        cols[2].markdown(f"<div style='font-size:0.8rem;color:#94a3b8;'>{m['league']}</div>",
-                         unsafe_allow_html=True)
-        cols[3].markdown(f"<div style='font-size:0.75rem;color:#475569;'>{m['country']}</div>",
-                         unsafe_allow_html=True)
-        cols[4].markdown(f"<span style='display:inline-block;background:{bg};border:1px solid {color};"
-                         f"color:{color};font-size:0.85rem;font-weight:700;padding:4px 12px;"
-                         f"border-radius:10px;'>{m['best_market']}</span>", unsafe_allow_html=True)
-        cols[5].markdown(f"<div style='font-size:1.05rem;font-weight:700;color:#f1f5f9;'>"
-                         f"{m['best_odds']}</div>", unsafe_allow_html=True)
-        prob = m["best_prob"]
-        prob_color = "#34d399" if prob >= 70 else "#f59e0b" if prob >= 65 else "#ef4444"
-        cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{prob_color};'>{prob}%</div>",
-                         unsafe_allow_html=True)
-        cols[7].markdown(f"<div style='font-size:1rem;font-weight:800;color:{color};'>+{ev}%</div>",
-                         unsafe_allow_html=True)
-        conf = m.get("confidence", 0)
-        conf_color = "#34d399" if conf >= 75 else "#f59e0b" if conf >= 50 else "#ef4444"
-        conf_icon = "🔥" if conf >= 75 else "✅" if conf >= 60 else "⚠️"
-        cols[8].markdown(f"<div style='font-size:0.9rem;font-weight:800;color:{conf_color};'>"
-                         f"{conf_icon}{conf}</div>", unsafe_allow_html=True)
-        kelly = m.get("kelly", 0)
-        cols[9].markdown(f"<div style='font-size:0.9rem;font-weight:700;color:#a78bfa;'>"
-                         f"{kelly}%</div>", unsafe_allow_html=True)
-        bk_c = "#f59e0b" if m["best_bookmaker"] == "Betano" else "#ec4899"
-        cols[10].markdown(f"<div style='font-size:0.8rem;font-weight:600;color:{bk_c};'>"
-                         f"{m['best_bookmaker']}</div>", unsafe_allow_html=True)
-        if i < len(matches) - 1:
-            st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">',
-                       unsafe_allow_html=True)
+        top3 = m["top3"]
+        best = top3[0]
+        # Build form HTML
+        form_colors = {"W": "#34d399", "D": "#f59e0b", "L": "#ef4444"}
+        hf_html = ""
+        for c in m.get("home_form", "")[:5]:
+            col = form_colors.get(c, "#64748b")
+            hf_html += f"<span style='color:{col};font-weight:800;font-size:0.8rem;margin:0 1px;'>{c}</span>"
+        af_html = ""
+        for c in m.get("away_form", "")[:5]:
+            col = form_colors.get(c, "#64748b")
+            af_html += f"<span style='color:{col};font-weight:800;font-size:0.8rem;margin:0 1px;'>{c}</span>"
+        st.markdown(f"""
+<div style='background:rgba(30,41,59,0.7);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;margin:12px 0;'>
+  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>
+    <div>
+      <span style='font-size:0.8rem;color:#64748b;margin-right:12px;'>🕐 {m['time']}</span>
+      <span style='font-weight:800;font-size:1.1rem;color:#f1f5f9;'>{m['home_team']} <span style='color:#475569;'>vs</span> {m['away_team']}</span>
+    </div>
+    <div style='text-align:right;'>
+      <span style='font-size:0.8rem;color:#94a3b8;'>{m['league']}</span>
+      <span style='font-size:0.7rem;color:#475569;margin-left:8px;'>{m['country']}</span>
+    </div>
+  </div>
+  <div style='display:flex;gap:6px;margin-bottom:12px;'>
+    <span style='font-size:0.7rem;color:#64748b;'>Formă gazdă:</span>
+    {hf_html}
+    <span style='font-size:0.7rem;color:#475569;margin:0 6px;'>|</span>
+    <span style='font-size:0.7rem;color:#64748b;'>Formă oaspete:</span>
+    {af_html}
+  </div>
+""", unsafe_allow_html=True)
+        # Pick #1 — GREEN BOX "JOACĂ"
+        p1 = top3[0]
+        bk_c1 = "#f59e0b" if p1["bookmaker"] == "Betano" else "#ec4899"
+        st.markdown(f"""
+  <div style='background:rgba(34,197,94,0.12);border:2px solid #22c55e;border-radius:10px;padding:12px 16px;margin-bottom:8px;'>
+    <div style='display:flex;justify-content:space-between;align-items:center;'>
+      <div style='display:flex;align-items:center;gap:12px;'>
+        <span style='background:#22c55e;color:#000;font-weight:900;font-size:0.8rem;padding:4px 12px;border-radius:6px;'>🎯 JOACĂ</span>
+        <span style='color:#22c55e;font-weight:700;font-size:1rem;'>{p1['market']}</span>
+        <span style='color:#f1f5f9;font-weight:800;font-size:1.1rem;'>{p1['odds']}</span>
+      </div>
+      <div style='display:flex;align-items:center;gap:16px;'>
+        <span style='color:#34d399;font-weight:800;'>{p1['real_prob']}%</span>
+        <span style='color:#38bdf8;font-weight:800;'>+{p1['ev']}%</span>
+        <span style='font-size:1.1rem;'>{p1['level']}</span>
+        <span style='color:#a78bfa;font-size:0.85rem;'>Miză {p1['kelly']}%</span>
+        <span style='color:{bk_c1};font-size:0.8rem;font-weight:600;'>{p1['bookmaker']}</span>
+      </div>
+    </div>
+  </div>
+""", unsafe_allow_html=True)
+        # Pick #2 and #3
+        for j, pk in enumerate(top3[1:], 2):
+            bk_c = "#f59e0b" if pk["bookmaker"] == "Betano" else "#ec4899"
+            st.markdown(f"""
+  <div style='background:rgba(51,65,85,0.4);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 16px;margin-bottom:4px;'>
+    <div style='display:flex;justify-content:space-between;align-items:center;'>
+      <div style='display:flex;align-items:center;gap:12px;'>
+        <span style='color:#64748b;font-weight:700;font-size:0.75rem;'>#{j}</span>
+        <span style='color:#94a3b8;font-weight:600;font-size:0.9rem;'>{pk['market']}</span>
+        <span style='color:#cbd5e1;font-weight:700;'>{pk['odds']}</span>
+      </div>
+      <div style='display:flex;align-items:center;gap:16px;'>
+        <span style='color:#94a3b8;font-weight:700;'>{pk['real_prob']}%</span>
+        <span style='color:#64748b;font-weight:700;'>+{pk['ev']}%</span>
+        <span>{pk['level']}</span>
+        <span style='color:#a78bfa;font-size:0.8rem;'>Miză {pk['kelly']}%</span>
+        <span style='color:{bk_c};font-size:0.75rem;'>{pk['bookmaker']}</span>
+      </div>
+    </div>
+  </div>
+""", unsafe_allow_html=True)
+        # Close card
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# Legend
+st.markdown("""
+<div style='text-align:center;padding:1rem;color:#64748b;font-size:0.8rem;'>
+🟢 ÎNCREDERE MARE (date solide, edge clar) · 🟡 ÎNCREDERE MEDIE (edge posibil) · 🔴 ÎNCREDERE MICĂ (risc ridicat)
+</div>
+""", unsafe_allow_html=True)
 
 # FOOTER
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
