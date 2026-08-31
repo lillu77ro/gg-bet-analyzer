@@ -838,7 +838,9 @@ def find_value_bets(bets_list, probs, bookmaker_name):
             # 10% discount — our model tends to overestimate
             rp_adj = round(rp * 0.90, 1)
             ev = round(rp_adj - ip, 1)
-            if ev >= MIN_EV and rp_adj >= 55:
+            # Collect at EV >= 3% (picks #2,#3 need alternatives)
+            # Match only qualifies if at least 1 bet has EV >= MIN_EV (5%)
+            if ev >= 3.0 and rp_adj >= 50:
                 vbs.append({"market": translate_bet(bn, vl), "odds": odds,
                     "real_prob": rp_adj, "implied_prob": ip, "ev": ev, "bookmaker": bookmaker_name})
     return vbs
@@ -913,6 +915,9 @@ def load_all_data():
             else:
                 pick["level"] = "🔴"
         best = top3[0]
+        # Match only qualifies if best pick has EV >= MIN_EV
+        if best["ev"] < MIN_EV:
+            continue
         conf = calc_confidence(best["ev"], best["real_prob"], hstats, astats, h2h_st, fix["league"])
         results.append({"time": fix["time"], "timestamp": fix["timestamp"],
             "home_team": fix["home_team"], "away_team": fix["away_team"],
