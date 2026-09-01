@@ -7,8 +7,8 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 # CONFIG & SECRETS
 # ==========================================
-API_KEY = '281e7a0cf284eeba705e2ae11f3d7722'
-GEMINI_KEY = 'AIzaSyBwgBiIvenXmKIBR5PXZ564Jfn2LV9FVhg'
+API_KEY = st.secrets["API_KEY"]
+GEMINI_KEY = st.secrets["GEMINI_KEY"]
 
 HEADERS = {
     'x-apisports-key': API_KEY
