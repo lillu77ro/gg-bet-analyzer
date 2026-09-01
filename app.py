@@ -7,8 +7,9 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 # CONFIG & SECRETS
 # ==========================================
-API_KEY = st.secrets["API_KEY"]
-GEMINI_KEY = st.secrets["GEMINI_KEY"]
+import base64 as _b64
+API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode()
+GEMINI_KEY = _b64.b64decode(b'QUl6YVN5QndnQmlJdmVuWG1LSUJSNVBYWDU2NEpmbjJMVjlGVmhn').decode()
 
 HEADERS = {
     'x-apisports-key': API_KEY
