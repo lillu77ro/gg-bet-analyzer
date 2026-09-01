@@ -9,13 +9,13 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 import base64 as _b64
 API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode()
-GEMINI_KEY = _b64.b64decode(b'QUl6YVN5QndnQmlJdmVuWG1LSUJSNVBYWDU2NEpmbjJMVjlGVmhn').decode()
+GEMINI_KEY = _b64.b64decode(b'QVEuQWI4Uk42SV8tN19qN2djdnBtQ1NDek9rS3FGNHJaa01xS0ZpalNOYnJGbG5jVk14NlE=').decode()
 
 HEADERS = {
     'x-apisports-key': API_KEY
 }
 API_BASE_URL = 'https://v3.football.api-sports.io'
-GEMINI_URL = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent?key={GEMINI_KEY}'
+GEMINI_URL = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key={GEMINI_KEY}'
 
 RO_TZ = timezone(timedelta(hours=3)) # UTC+3
 
