@@ -1,6 +1,6 @@
 """
 NORD ALLASKA SUPREME — VALUE BET SCANNER
-Surse: API-Football PRO + Betano + Superbet
+Surse: API-Football PRO + Betano
 Metodologie: Expected Value (EV) = Prob. Reală - Prob. Implicită
 Cote: 1.75 — 3.00 | EV minim: 5%
 """
@@ -33,7 +33,6 @@ API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode
 API_BASE = "https://v3.football.api-sports.io"
 API_HEADERS = {"x-apisports-key": API_KEY}
 BETANO_ID = 32
-SUPERBET_ID = 34
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
 MIN_EV = 5.0
@@ -42,8 +41,8 @@ MIN_DATA = 5
 RO_TZ = timezone(timedelta(hours=3))
 EXCLUDE_WORDS = ["Women","Youth","U17","U19","U20","U21","U23","U18","U22","Reserve","Reserves","Amateur","Amateurs","Beach Soccer","Futsal","Indoor","eSoccer","Esports","SRL","Simulated","Virtual","Cyber","Friendlies","Friendly"]
 EXCLUDE_TEAM = [" W"," Women"," Ladies"," Femenino"," Femminile"," Frauen"]
-SUPPORTED_BETS = ["Match Winner","Both Teams Score","Goals Over/Under","Double Chance","Home/Away","Goals Over/Under First Half","Goals Over/Under Second Half","First Half Winner","Second Half Winner","Asian Handicap","Total - Home","Total - Away","Clean Sheet - Home","Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away","Both Teams Score - First Half","Both Teams Score - Second Half","Highest Scoring Half","To Score In Both Halves"]
-AH_BLOCKED = {"Superbet"}
+SUPPORTED_BETS = ["Match Winner","Both Teams Score","Goals Over/Under","Double Chance","Home/Away","Goals Over/Under First Half","Goals Over/Under Second Half","First Half Winner","Second Half Winner","Total - Home","Total - Away","Clean Sheet - Home","Clean Sheet - Away","Win to Nil - Home","Win to Nil - Away","Both Teams Score - First Half","Both Teams Score - Second Half","Highest Scoring Half","To Score In Both Halves"]
+
 
 def api_get(ep, params=None):
     try:
@@ -190,7 +189,6 @@ def find_vb(bets, probs, bk):
     for bet in bets:
         bn = bet.get("name","")
         if bn not in SUPPORTED_BETS: continue
-        if bn == "Asian Handicap" and bk in AH_BLOCKED: continue
         for val in bet.get("values",[]):
             try: odds = float(val.get("odd","0"))
             except: continue
@@ -208,11 +206,10 @@ def load_data():
     today = date.today().strftime("%Y-%m-%d")
     fixes = fetch_fixtures(today)
     b_odds = fetch_all_odds(today, BETANO_ID)
-    s_odds = fetch_all_odds(today, SUPERBET_ID)
-    for f in fixes: f["b_bets"]=b_odds.get(f["fid"],[]); f["s_bets"]=s_odds.get(f["fid"],[])
+    for f in fixes: f["b_bets"]=b_odds.get(f["fid"],[])
     results = []
     for f in fixes:
-        if not f["b_bets"] and not f["s_bets"]: continue
+        if not f["b_bets"]: continue
         hm = api_get("fixtures",{"team":f["hid"],"last":NUM_MATCHES})
         am = api_get("fixtures",{"team":f["aid"],"last":NUM_MATCHES})
         h2h = api_get("fixtures/headtohead",{"h2h":f"{f['hid']}-{f['aid']}","last":10})
@@ -221,7 +218,7 @@ def load_data():
         if not hs or not has_: continue
         if hs["n"]<MIN_DATA or has_["n"]<MIN_DATA: continue
         probs = calc_probs(hs, has_, h2s)
-        vb = find_vb(f["b_bets"],probs,"Betano") + find_vb(f["s_bets"],probs,"Superbet")
+        vb = find_vb(f["b_bets"],probs,"Betano")
         if not vb: continue
         best_m = {}
         for v in vb:
@@ -244,14 +241,14 @@ def ev_bg(ev):
     return "rgba(56,189,248,0.10)"
 
 today_str = datetime.now(RO_TZ).strftime("%d %B %Y")
-st.markdown(f'<div class="main-header"><h1>🏔️ NORD ALLASKA SUPREME</h1><p>Value Bet Scanner · Betano + Superbet · {today_str}</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>🏔️ NORD ALLASKA SUPREME</h1><p>Value Bet Scanner · Betano · {today_str}</p></div>', unsafe_allow_html=True)
 col_r = st.columns([1,2,1])
 with col_r[1]:
     refresh = st.button("🔄 Scanează Value Bets", use_container_width=True, type="primary")
-    st.markdown("<div style='text-align:center;font-size:0.75rem;color:#475569;margin-top:4px;'>API-Football PRO · Betano + Superbet · Cote 1.75–3.00 · EV > 5%</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:center;font-size:0.75rem;color:#475569;margin-top:4px;'>API-Football PRO · Betano · Cote 1.75–3.00 · EV > 5%</div>", unsafe_allow_html=True)
 if refresh: st.cache_data.clear()
 
-with st.spinner("⏳ Scanez meciurile și cotele de pe Betano + Superbet..."):
+with st.spinner("⏳ Scanez meciurile și cotele de pe Betano..."):
     matches, dd = load_data()
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -286,4 +283,4 @@ else:
         if i<len(matches)-1: st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">', unsafe_allow_html=True)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-st.markdown(f"<div class='footer-note'>⚠️ <strong>Disclaimer:</strong> Pariurile sportive implică riscuri financiare. EV pozitiv NU garantează profit pe termen scurt. Joacă responsabil.<br><br><strong>Sursă:</strong> API-Football PRO · Betano + Superbet · Cote {MIN_ODDS}–{MAX_ODDS} · EV > +{MIN_EV}%</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='footer-note'>⚠️ <strong>Disclaimer:</strong> Pariurile sportive implică riscuri financiare. EV pozitiv NU garantează profit pe termen scurt. Joacă responsabil.<br><br><strong>Sursă:</strong> API-Football PRO · Betano · Cote {MIN_ODDS}–{MAX_ODDS} · EV > +{MIN_EV}%</div>", unsafe_allow_html=True)
