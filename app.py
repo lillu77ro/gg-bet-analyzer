@@ -197,7 +197,7 @@ def find_vb(bets, probs, bk):
             rp = map_prob(bn, vl, probs)
             if rp is None: continue
             ip = round(1/odds*100,1); ev = round(rp-ip,1)
-            if ev >= MIN_EV and rp >= 55:
+            if ev >= MIN_EV and rp >= 85:
                 vbs.append({"market":tr_bet(bn,vl),"odds":odds,"rp":rp,"ip":ip,"ev":ev,"bk":bk})
     return vbs
 
