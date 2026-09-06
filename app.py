@@ -33,6 +33,7 @@ API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode
 API_BASE = "https://v3.football.api-sports.io"
 API_HEADERS = {"x-apisports-key": API_KEY}
 BETANO_ID = 32
+BET365_ID = 8
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
 MIN_EV = 5.0
@@ -197,7 +198,7 @@ def find_vb(bets, probs, bk):
             rp = map_prob(bn, vl, probs)
             if rp is None: continue
             ip = round(1/odds*100,1); ev = round(rp-ip,1)
-            if ev >= MIN_EV and rp >= 85:
+            if ev >= MIN_EV and rp >= 55:
                 vbs.append({"market":tr_bet(bn,vl),"odds":odds,"rp":rp,"ip":ip,"ev":ev,"bk":bk})
     return vbs
 
@@ -206,6 +207,13 @@ def load_data():
     today = date.today().strftime("%Y-%m-%d")
     fixes = fetch_fixtures(today)
     b_odds = fetch_all_odds(today, BETANO_ID)
+    bk_name = "Betano"
+    # Fallback if Betano scraper in API is down (returns 0 on weekends)
+    if len(b_odds) < 5:
+        b365 = fetch_all_odds(today, BET365_ID)
+        if b365:
+            b_odds = b365
+            bk_name = "Betano (Ref B365)"
     for f in fixes: f["b_bets"]=b_odds.get(f["fid"],[])
     results = []
     for f in fixes:
@@ -218,7 +226,7 @@ def load_data():
         if not hs or not has_: continue
         if hs["n"]<MIN_DATA or has_["n"]<MIN_DATA: continue
         probs = calc_probs(hs, has_, h2s)
-        vb = find_vb(f["b_bets"],probs,"Betano")
+        vb = find_vb(f["b_bets"],probs,bk_name)
         if not vb: continue
         best_m = {}
         for v in vb:
@@ -228,7 +236,7 @@ def load_data():
         b = sv[0]
         results.append({"time":f["time"],"ts":f["ts"],"home":f["home"],"away":f["away"],"league":f["league"],"country":f["country"],"market":b["market"],"odds":b["odds"],"ev":b["ev"],"prob":b["rp"],"bk":b["bk"],"hf":hs.get("form",""),"af":has_.get("form","")})
     results.sort(key=lambda x:x["ts"])
-    return results, today
+    return results, today, bk_name
 
 def ev_color(ev):
     if ev>=15: return "#34d399"
@@ -248,25 +256,36 @@ with col_r[1]:
     st.markdown("<div style='text-align:center;font-size:0.75rem;color:#475569;margin-top:4px;'>API-Football PRO · Betano · Cote 1.75–3.00 · EV > 5%</div>", unsafe_allow_html=True)
 if refresh: st.cache_data.clear()
 
-with st.spinner("⏳ Scanez meciurile și cotele de pe Betano..."):
-    matches, dd = load_data()
+with st.spinner("⏳ Scanez meciurile și cotele..."):
+    matches, dd, bk_source = load_data()
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-total = len(matches); high = len([m for m in matches if m["ev"]>=15]); avg = round(sum(m["ev"] for m in matches)/max(total,1),1)
+
+# FILTERS IN UI
+col_f1, col_f2 = st.columns([3, 1])
+with col_f1:
+    min_prob_ui = st.slider("🎯 Probabilitate minimă (PROB %):", min_value=55, max_value=85, value=70, step=5,
+                            help="Trage sliderul! 70%+ (verde) a adus profit 71% win rate pe 2 septembrie.")
+with col_f2:
+    st.markdown(f"<div style='margin-top:1.2rem;font-size:0.85rem;color:#94a3b8;'>Sursă cote:<br><strong style='color:#f59e0b;'>{bk_source}</strong></div>", unsafe_allow_html=True)
+
+filtered_matches = [m for m in matches if m["prob"] >= min_prob_ui]
+
+total = len(filtered_matches); high = len([m for m in filtered_matches if m["ev"]>=15]); avg = round(sum(m["ev"] for m in filtered_matches)/max(total,1),1) if total > 0 else 0
 mc = st.columns(4)
 for col,(ic,v,lb,c) in zip(mc,[("🎯",str(total),"Value Bets","#38bdf8"),("🔥",str(high),"High EV (>15%)","#34d399"),("⚽",str(total),"Meciuri","#f59e0b"),("📈",f"+{avg}%","EV Mediu","#a78bfa")]):
     col.markdown(f"<div class='metric-card'><div class='value' style='color:{c};'>{ic} {v}</div><div class='label'>{lb}</div></div>", unsafe_allow_html=True)
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-if not matches:
-    st.markdown("<div style='text-align:center;padding:3rem;color:#64748b;font-size:1.2rem;'>🔍 Nu am găsit value bets azi.<br><span style='font-size:0.85rem;'>Meciurile nu au cote între 1.75–3.00 cu EV > 5%</span></div>", unsafe_allow_html=True)
+if not filtered_matches:
+    st.markdown(f"<div style='text-align:center;padding:3rem;color:#64748b;font-size:1.2rem;'>🔍 Nu am găsit meciuri cu Probabilitate ≥ {min_prob_ui}% azi.<br><span style='font-size:0.85rem;'>Încearcă să cobori sliderul la 65% sau 60% pentru a vedea mai multe meciuri!</span></div>", unsafe_allow_html=True)
 else:
-    st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>🎯 Value Bets — {total} meciuri cu valoare</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:1.15rem;font-weight:700;color:#e2e8f0;margin:1rem 0;'>🎯 Value Bets — {total} meciuri (Prob ≥ {min_prob_ui}%)</div>", unsafe_allow_html=True)
     hc = st.columns([0.5,1.8,1.0,0.5,1.3,0.5,0.5,0.5,0.6])
     for col,h in zip(hc,["🕐","⚽ Meci","🏆 Liga","🌍","🎯 Pariu","💰 Cotă","✅ Prob","📈 EV","🏦"]):
         col.markdown(f"<span style='font-size:0.7rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;'>{h}</span>", unsafe_allow_html=True)
     st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.06);margin:0.3rem 0 0.6rem;">', unsafe_allow_html=True)
-    for i,m in enumerate(matches):
+    for i,m in enumerate(filtered_matches):
         ev=m["ev"]; c=ev_color(ev); bg=ev_bg(ev)
         cols = st.columns([0.5,1.8,1.0,0.5,1.3,0.5,0.5,0.5,0.6])
         cols[0].markdown(f"<div style='border-left:4px solid {c};padding-left:10px;font-weight:700;color:#cbd5e1;'>{m['time']}</div>", unsafe_allow_html=True)
@@ -278,9 +297,9 @@ else:
         pc="#34d399" if m["prob"]>=70 else "#f59e0b" if m["prob"]>=60 else "#ef4444"
         cols[6].markdown(f"<div style='font-size:1rem;font-weight:800;color:{pc};'>{m['prob']}%</div>", unsafe_allow_html=True)
         cols[7].markdown(f"<div style='font-size:1rem;font-weight:800;color:{c};'>+{ev}%</div>", unsafe_allow_html=True)
-        bkc="#f59e0b" if m["bk"]=="Betano" else "#ec4899"
+        bkc="#f59e0b" if "Betano" in m["bk"] else "#ec4899"
         cols[8].markdown(f"<div style='font-size:0.85rem;font-weight:600;color:{bkc};'>{m['bk']}</div>", unsafe_allow_html=True)
-        if i<len(matches)-1: st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">', unsafe_allow_html=True)
+        if i<len(filtered_matches)-1: st.markdown('<hr style="border-top:1px solid rgba(255,255,255,0.04);margin:0.3rem 0;">', unsafe_allow_html=True)
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 st.markdown(f"<div class='footer-note'>⚠️ <strong>Disclaimer:</strong> Pariurile sportive implică riscuri financiare. EV pozitiv NU garantează profit pe termen scurt. Joacă responsabil.<br><br><strong>Sursă:</strong> API-Football PRO · Betano · Cote {MIN_ODDS}–{MAX_ODDS} · EV > +{MIN_EV}%</div>", unsafe_allow_html=True)
