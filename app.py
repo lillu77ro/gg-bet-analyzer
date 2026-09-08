@@ -33,7 +33,6 @@ API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode
 API_BASE = "https://v3.football.api-sports.io"
 API_HEADERS = {"x-apisports-key": API_KEY}
 BETANO_ID = 32
-BET365_ID = 8
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
 MIN_EV = 5.0
@@ -207,13 +206,6 @@ def load_data():
     today = date.today().strftime("%Y-%m-%d")
     fixes = fetch_fixtures(today)
     b_odds = fetch_all_odds(today, BETANO_ID)
-    bk_name = "Betano"
-    # Fallback if Betano scraper in API is down (returns 0 on weekends)
-    if len(b_odds) < 5:
-        b365 = fetch_all_odds(today, BET365_ID)
-        if b365:
-            b_odds = b365
-            bk_name = "Betano (Ref B365)"
     for f in fixes: f["b_bets"]=b_odds.get(f["fid"],[])
     results = []
     for f in fixes:
@@ -226,7 +218,7 @@ def load_data():
         if not hs or not has_: continue
         if hs["n"]<MIN_DATA or has_["n"]<MIN_DATA: continue
         probs = calc_probs(hs, has_, h2s)
-        vb = find_vb(f["b_bets"],probs,bk_name)
+        vb = find_vb(f["b_bets"],probs,"Betano")
         if not vb: continue
         best_m = {}
         for v in vb:
@@ -236,7 +228,7 @@ def load_data():
         b = sv[0]
         results.append({"time":f["time"],"ts":f["ts"],"home":f["home"],"away":f["away"],"league":f["league"],"country":f["country"],"market":b["market"],"odds":b["odds"],"ev":b["ev"],"prob":b["rp"],"bk":b["bk"],"hf":hs.get("form",""),"af":has_.get("form","")})
     results.sort(key=lambda x:x["ts"])
-    return results, today, bk_name
+    return results, today
 
 def ev_color(ev):
     if ev>=15: return "#34d399"
@@ -256,18 +248,14 @@ with col_r[1]:
     st.markdown("<div style='text-align:center;font-size:0.75rem;color:#475569;margin-top:4px;'>API-Football PRO · Betano · Cote 1.75–3.00 · EV > 5%</div>", unsafe_allow_html=True)
 if refresh: st.cache_data.clear()
 
-with st.spinner("⏳ Scanez meciurile și cotele..."):
-    matches, dd, bk_source = load_data()
+with st.spinner("⏳ Scanez meciurile și cotele de pe Betano..."):
+    matches, dd = load_data()
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-# FILTERS IN UI
-col_f1, col_f2 = st.columns([3, 1])
-with col_f1:
-    min_prob_ui = st.slider("🎯 Probabilitate minimă (PROB %):", min_value=55, max_value=85, value=70, step=5,
-                            help="Trage sliderul! 70%+ (verde) a adus profit 71% win rate pe 2 septembrie.")
-with col_f2:
-    st.markdown(f"<div style='margin-top:1.2rem;font-size:0.85rem;color:#94a3b8;'>Sursă cote:<br><strong style='color:#f59e0b;'>{bk_source}</strong></div>", unsafe_allow_html=True)
+# FILTER IN UI
+min_prob_ui = st.slider("🎯 Probabilitate minimă (PROB %):", min_value=55, max_value=95, value=85, step=5,
+                        help="85%+ = doar meciurile cele mai sigure. Coboară la 70% pentru mai multe opțiuni.")
 
 filtered_matches = [m for m in matches if m["prob"] >= min_prob_ui]
 
