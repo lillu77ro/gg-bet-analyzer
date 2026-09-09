@@ -33,6 +33,7 @@ API_KEY = _b64.b64decode(b'MjgxZTdhMGNmMjg0ZWViYTcwNWUyYWUxMWYzZDc3MjI=').decode
 API_BASE = "https://v3.football.api-sports.io"
 API_HEADERS = {"x-apisports-key": API_KEY}
 BETANO_ID = 32
+BET365_ID = 8
 MIN_ODDS = 1.75
 MAX_ODDS = 3.00
 MIN_EV = 5.0
@@ -206,6 +207,9 @@ def load_data():
     today = date.today().strftime("%Y-%m-%d")
     fixes = fetch_fixtures(today)
     b_odds = fetch_all_odds(today, BETANO_ID)
+    # Fallback silențios: dacă Betano e gol în API (weekend), ia cote referință
+    if len(b_odds) < 5:
+        b_odds = fetch_all_odds(today, BET365_ID)
     for f in fixes: f["b_bets"]=b_odds.get(f["fid"],[])
     results = []
     for f in fixes:
